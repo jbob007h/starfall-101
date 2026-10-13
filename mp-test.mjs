@@ -21,11 +21,11 @@ console.log("in match (state, human rivals seen):", humans);
 for (const p of pages) await p.keyboard.down("KeyZ");
 await pages[0].waitForTimeout(3000);
 // ALPHA cashes in a bullet wave on BRAVO
-const sent = await ev(pages[0], () => { const g = window.__game; const t = g.rivals.find(r => r.name === "BRAVO"); g.mode = 0; g.randTarget = t.id; g.randCd = 99; g.chain = 14; g.eligible = true; g.cashIn(); return t.id; });
+const sent = await ev(pages[0], () => { const g = window.__game; const t = g.rivals.find(r => r.name === "BRAVO"); g.mode = 0; g.randTarget = t.id; g.randCd = 99; g.chain = 30; g.eligible = true; g.cashIn(true); return t.id; });
 console.log("ALPHA sent wave to local id", sent);
 await pages[1].waitForTimeout(2400);
 console.log("BRAVO attackLog:", JSON.stringify(await ev(pages[1], () => window.__game.attackLog.filter(a => !a.from.startsWith("BOT")))));
-console.log("BRAVO waves/warns:", await ev(pages[1], () => [window.__game.waves.length, window.__game.warns.length, window.__game.eb.length]));
+console.log("BRAVO bosses:", await ev(pages[1], () => window.__game.enemies.filter(e => e.boss).map(e => e.bv)));
 await pages[1].screenshot({ path: "screenshot6.png" });
 // CHARLIE disconnects -> should be KO'd for others
 await pages[2].context().close();

@@ -17,3 +17,11 @@ export const BOSS = [
   ".xx...xx.....xx...xx.", "..x....x.....x....x..",
 ];
 export const BADGE = ["...y...", "..yyy..", "yyywyyy", ".yywyy.", "..yyy..", ".yy.yy.", "y.....y"];
+export const SERP_HEAD = [
+  "...xxxxx...", "..xwwxwwx..", ".xxwkxkwxx.", "xxxxxxxxxxx", "xyx.xxx.xyx", ".x..xyx..x.", "....x.x....",
+];
+export const SERP_SEG = ["..xxx..", ".xmmmx.", "xmmwmmx", "xmwwwmx", "xmmwmmx", ".xmmmx.", "..xxx.."];
+/** Procedural sprite: draw with fillRects into an offscreen canvas. */
+export function drawSprite(w: number, h: number, fn: (g: CanvasRenderingContext2D) => void) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; fn(c.getContext("2d")!); return c;
+}

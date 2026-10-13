@@ -31,6 +31,19 @@ In-run drops:
 - Bomb: clears the screen but resets the chain timer.
 - Chain freeze: pauses the streak timer for a few seconds.
 - Shield: blocks one hit or one incoming attack.
+- Lightning: for ~6s the ship auto-fires chain-lightning every ~0.2s at the nearest enemy, jumping to 2-3 more (works without holding fire; kills count toward chains). Timer shown in the bottom strip.
+- Bomb stock is capped at 5.
+
+## Mini-bosses (sent at the top attack tier)
+The sender's side (sim/server) picks a design id per attack; designs unlock with match stage/attack power (newest favored):
+0. SAUCER: side-to-side; rings, spirals, aimed fans. Hit anywhere.
+1. SERPENT: weaving head with an armored 8-segment body trail; only the head is weak; body fires aimed shots, head fires fans.
+2. FORTRESS: wide hull with two turrets shielding the core; destroy both turrets to expose the core; laser walls with a gap, then a berserk spiral.
+3. PHANTOM: teleports every ~3s (outline warning); only vulnerable while its eye is open; ring burst + rotating 4-arm stream.
+
+## Attack feedback
+- Sending: "BULLET WAVE SENT!" + target name, launch whoosh + tiered chime, no screen shake.
+- Receiving: "INCOMING BULLET WAVE!" + sender name, INCOMING arrows, two-tone klaxon (more pulses for bigger tiers).
 
 ## Design pillar: easy to pick up, high skill ceiling
 Goal: a casual player survives a few minutes; experts have lots of room to master.

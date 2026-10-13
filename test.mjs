@@ -56,6 +56,32 @@ await p.waitForTimeout(2500);
 await p.evaluate(() => { const g = window.__game; g.chain = 12; g.eligible = true; g.chainT = 0.01; g.hitstop = 0; });
 await p.waitForTimeout(300);
 await p.screenshot({ path: "screenshot4.png" });
+// --- all 4 mini-boss designs: spawn each, let it fight for a bit
+for (const v of [0, 1, 2, 3]) {
+  await p.evaluate(v => { const g = window.__game; g.enemies = g.enemies.filter(e => !e.boss); g.eb = []; g.hp = 3; g.inv = 99; g.spawnBoss(v, 20, 4); }, v);
+  await p.waitForTimeout(1800);
+  console.log("boss", v, await p.evaluate(() => { const b = window.__game.enemies.find(e => e.boss); return b ? [b.bv, Math.round(b.hp), b.tur ? b.tur.map(Math.round) : null, window.__game.eb.length] : "dead"; }));
+}
+await p.evaluate(() => { const g = window.__game; g.enemies = g.enemies.filter(e => !e.boss); g.eb = []; g.spawnBoss(2, 25, 9); g.zapT = 0; });
+await p.waitForTimeout(2600);
+await p.screenshot({ path: "screenshot7.png" });
+// --- lightning + INCOMING / SENT labels
+await p.evaluate(() => { const g = window.__game; g.enemies = g.enemies.filter(e => !e.boss); g.eb = []; g.popups = [];
+  g.spawnFormation(7, 1, 0, false, -1); g.spawnFormation(6, 0, 2, false, -1);
+  g.collect({ kind: "L", x: g.px, y: g.py, vx: 0, vy: 0, t: 0 });
+  g.onNet({ type: "attack", from: 5, to: -1, tier: 2, power: 20, variant: 3 }); });
+await p.waitForTimeout(900);
+const zap0 = await p.evaluate(() => [window.__game.zapT.toFixed(1), window.__game.bolts.length, window.__game.score]);
+await p.evaluate(() => { const g = window.__game; g.spawnFormation(8, 2, 3, false, -1); g.spawnFormation(6, 3, 0, false, -1); for (const e of g.enemies) if (!e.boss) e.hp = 30; g.zapT = 4;
+  g.chain = 14; g.eligible = true; g.hitstop = 0; g.cashIn(); g.hitstop = 0; });
+await p.waitForTimeout(700);
+await p.evaluate(() => { const g = window.__game; g.onNet({ type: "attack", from: 7, to: -1, tier: 1, power: 12, variant: 0 }); for (const q of g.projs) if (!q.out) q.t = 0.99; });
+await p.waitForTimeout(120);
+await p.screenshot({ path: "screenshot8.png" });
+console.log("lightning [t, bolts, score]", zap0, "texts:", await p.evaluate(() => window.__game.popups.map(q => q.text).join(" | ")));
+await p.waitForTimeout(1500);
+console.log("incoming boss variant spawned:", await p.evaluate(() => window.__game.enemies.filter(e => e.boss).map(e => e.bv)));
+console.log("missing glyphs:", await p.evaluate(() => [...window.__missingGlyphs].join("")));
 const fps = await p.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { n++; if (performance.now() - t < 1000) requestAnimationFrame(f); else r(n); }; requestAnimationFrame(f); }));
 console.log("fps", fps, "errors:", errs);
 await b.close();

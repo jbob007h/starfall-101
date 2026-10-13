@@ -21,6 +21,8 @@ Tests: `node test.mjs` (single player + stubbed gamepad, needs `npm run serve` o
 | Bomb | X | B |
 | Targeting | 1 Random, 2 KOs, 3 Attackers, 4 Badges | Right-stick flick: up / right / down / left |
 | Start / vote start in lobby / pause / restart | Enter, P, R | Start |
+Power-ups: W weapon, B bomb (max 5), F chain freeze, S shield, L lightning (6s auto chain-lightning).
+Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHANTOM (hit when the eye opens); the design id travels with the attack (`variant`) online.
 Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 25 (mini-boss).
 
 ## Networking

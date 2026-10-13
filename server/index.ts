@@ -53,7 +53,7 @@ function startMatch() {
   const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim };
   const toAll = (o: object) => { for (const c of m.clients.values()) send(c, o); };
   m.sim = new MatchSim(players, {
-    attack: (from, to, tier, power) => { const c = m.clients.get(to); if (c) send(c, { t: "attack", from, to, tier, power }); },
+    attack: (from, to, tier, power, variant) => { const c = m.clients.get(to); if (c) send(c, { t: "attack", from, to, tier, power, variant }); },
     hit: (id, from) => toAll({ t: "hit", id, from }),
     ko: (id, by, place, badges) => { toAll({ t: "ko", id, by, place, badges }); const c = m.clients.get(id); if (c) c.alive = false; },
     end: (winner) => { toAll({ t: "matchEnd", winner }); setTimeout(() => matches.delete(m.id), 1000); },

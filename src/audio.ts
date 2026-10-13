@@ -1,3 +1,4 @@
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 // Procedural chiptune SFX + layered adaptive music (Web Audio).
 export class Audio {
   ctx: AudioContext | null = null;
@@ -46,6 +47,29 @@ export class Audio {
   dot() { this.tone(1500, 0.03, "sine", 0.04); }
   bossHit() { this.noiseHit(0.03, 0.05, 4000); }
   explodeBig() { this.noiseHit(0.7, 0.4, 100); this.tone(200, 0.6, "square", 0.2, 30); }
+  /** Bandpass noise sweep (whoosh). */
+  sweep(dur: number, f0: number, f1: number, vol: number, when = 0) {
+    const c = this.ctx; if (!c) return; const t = when || c.currentTime;
+    const src = c.createBufferSource(); src.buffer = this.noise; const f = c.createBiquadFilter(); f.type = "bandpass"; f.Q.value = 4;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = c.createGain(); g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f); f.connect(g); g.connect(this.sfxBus); src.start(t); src.stop(t + dur + 0.02);
+  }
+  /** ATTACK SENT: rising launch whoosh + saw riser, then a bell chime (1/2/3 notes by tier; boom on mini-boss). */
+  sent(tier: number) {
+    const c = this.ctx; if (!c) return; const t = c.currentTime;
+    this.sweep(0.35, 250, 5000, 0.5, t); this.tone(180, 0.32, "sawtooth", 0.12, 1400, t);
+    const notes = [[24], [19, 24], [12, 19, 24]][tier] || [24]; const base = [784, 659, 523][tier] || 784;
+    notes.forEach((n, i) => { const f = base * Math.pow(2, (n - 12) / 12); this.tone(f, 0.45, "sine", 0.22, 0, t + 0.3 + i * 0.09); this.tone(f * 2, 0.25, "triangle", 0.07, 0, t + 0.3 + i * 0.09); });
+    if (tier === 2) this.tone(90, 0.5, "sine", 0.4, 40, t + 0.28);
+  }
+  /** INCOMING: two-tone klaxon, more pulses for bigger tiers. */
+  incoming(tier: number) {
+    const c = this.ctx; if (!c) return; const t = c.currentTime; const n = 2 + tier;
+    for (let i = 0; i < n; i++) { this.tone(880, 0.11, "square", 0.13, 840, t + i * 0.24); this.tone(587, 0.11, "square", 0.13, 560, t + i * 0.24 + 0.12); }
+  }
+  zap() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(0.08, 0.18, 3500, t); this.tone(rnd(1400, 2200), 0.07, "sawtooth", 0.06, 300, t); this.noiseHit(0.03, 0.12, 6000, t + 0.04); }
+  lightning() { const c = this.ctx; if (!c) return; const t = c.currentTime; for (let i = 0; i < 6; i++) this.noiseHit(0.04, 0.2, 4000, t + i * 0.05); [0, 7, 12, 19].forEach((s, i) => this.tone(880 * Math.pow(2, s / 12), 0.1, "square", 0.08, 0, t + 0.3 + i * 0.05)); }
   // ---- Music ----
   setTier(t: number) { this.pendingTier = t; }
   startMusic() { if (!this.ctx || this.playing) return; this.playing = true; this.step = 0; this.nextTime = this.ctx.currentTime + 0.1; this.timer = window.setInterval(() => this.schedule(), 25); }

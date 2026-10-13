@@ -17,7 +17,7 @@ export type NetEvent =
   | { type: "lobbyLeave"; id: number; name: string; count: number }
   | { type: "lobbyCountdown"; seconds: number; humans: number }
   | { type: "matchStart"; players: PlayerInfo[]; seed: number }
-  | { type: "attack"; from: number; to: number; tier: Tier; power: number }
+  | { type: "attack"; from: number; to: number; tier: Tier; power: number; variant: number }
   | { type: "state"; states: PlayerState[] }
   | { type: "hit"; id: number; from: number }
   | { type: "ko"; id: number; by: number; place: number; badges: number }
@@ -111,7 +111,7 @@ export class LocalSimTransport implements Transport {
     for (let i = ps.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ps[i], ps[j]] = [ps[j], ps[i]]; }
     this.map = new SlotMap(ps.findIndex(p => p.local));
     this.sim = new MatchSim(ps, {
-      attack: (from, to, tier, power) => { if (to === this.map.me) this.emit({ type: "attack", from: this.map.toLocal(from), to: LOCAL, tier, power }); },
+      attack: (from, to, tier, power, variant) => { if (to === this.map.me) this.emit({ type: "attack", from: this.map.toLocal(from), to: LOCAL, tier, power, variant }); },
       hit: (id, from) => { if (id !== this.map.me) this.emit({ type: "hit", id: this.map.toLocal(id), from: this.map.toLocal(from) }); },
       ko: (id, by, place, badges) => { if (id !== this.map.me) this.emit({ type: "ko", id: this.map.toLocal(id), by: this.map.toLocal(by), place, badges }); },
       end: (winner) => { this.emit({ type: "matchEnd", winner: this.map.toLocal(winner) }); this.phase = "idle"; },
@@ -148,7 +148,7 @@ export class WebSocketTransport implements Transport {
       case "lobbyCountdown": this.emit({ type: "lobbyCountdown", seconds: m.seconds, humans: m.humans }); break;
       case "matchStart": this.map = new SlotMap(m.you);
         this.emit({ type: "matchStart", seed: m.seed || 0, players: (m.players as any[]).filter(p => p.id !== m.you).map(p => ({ id: L(p.id), name: p.name, isBot: p.isBot })).sort((a, b) => a.id - b.id) }); break;
-      case "attack": if (m.to === this.map.me) this.emit({ type: "attack", from: L(m.from), to: LOCAL, tier: m.tier, power: m.power }); break;
+      case "attack": if (m.to === this.map.me) this.emit({ type: "attack", from: L(m.from), to: LOCAL, tier: m.tier, power: m.power, variant: (m.variant | 0) % 4 }); break;
       case "state": this.emit({ type: "state", states: (m.s as number[][]).filter(a => a[0] !== this.map.me).map(([id, hp, badges, tg]) => ({ id: L(id), hp, badges, target: tg ? LOCAL : -2 })) }); break;
       case "hit": if (m.id !== this.map.me) this.emit({ type: "hit", id: L(m.id), from: L(m.from) }); break;
       case "ko": if (m.id !== this.map.me) this.emit({ type: "ko", id: L(m.id), by: L(m.by), place: m.place, badges: m.badges }); break;

@@ -4,7 +4,7 @@ export type Tier = 0 | 1 | 2;
 export interface Slot { id: number; name: string; isBot: boolean; ai: boolean; alive: boolean; hp: number; badges: number; skill: number;
   target: number; targets: number[]; retarget: number; sendCd: number; regen: number; armed: boolean; place: number; }
 export interface MatchOut {
-  attack(from: number, to: number, tier: Tier, power: number): void; // delivered to human `to`
+  attack(from: number, to: number, tier: Tier, power: number, variant: number): void; // delivered to human `to`; variant = mini-boss design
   hit(id: number, from: number): void;
   ko(id: number, by: number, place: number, badges: number): void;
   end(winner: number): void;
@@ -13,6 +13,12 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
+export const BOSS_VARIANTS = 4; // 0 SAUCER, 1 SERPENT, 2 FORTRESS, 3 PHANTOM
+/** Mini-boss design for a sent attack: designs unlock with match stage / attack power, newest favored. */
+export function pickBossVariant(power: number, time: number) {
+  const unlocked = Math.min(BOSS_VARIANTS, 2 + (time > 120 || power >= 30 ? 1 : 0) + (time > 200 || power >= 40 ? 1 : 0));
+  return Math.random() < 0.4 ? unlocked - 1 : Math.floor(Math.random() * unlocked);
+}
 export class MatchSim {
   slots: Slot[]; time = 0; over = false;
   /** players: in slot order. ai=true slots are driven by this sim (bots, or simulated humans offline). */
@@ -27,7 +33,7 @@ export class MatchSim {
   humanAttack(from: number, to: number, tier: Tier, power: number) {
     const t = this.slots[to], f = this.slots[from]; if (!t || !t.alive || !f || !f.alive || this.over) return;
     if (t.ai) { this.damage(t, [1, 2, 3][tier] + (power > 30 ? 1 : 0), from); if (Math.random() < 0.5) t.target = from; }
-    else this.out.attack(from, to, tier, power);
+    else this.out.attack(from, to, tier, power, pickBossVariant(power, this.time));
   }
   humanState(id: number, hp: number, badges: number, targets: number[], armed: boolean) {
     const s = this.slots[id]; if (!s || !s.alive) return; s.hp = hp; s.badges = badges; s.targets = targets; s.armed = armed; s.target = targets[0] ?? -2;
@@ -78,7 +84,7 @@ export class MatchSim {
           b.sendCd = rnd(14, 26) / Math.sqrt(ramp) * (n <= 2 ? 0.5 : 1);
           let tier: Tier = 0; const pw = (calm ? 3 : 4) + Math.floor(rnd(0, 10) * b.skill * ramp) + b.badges;
           if (!calm) { const roll = Math.random() * b.skill * ramp; tier = roll > 1.1 ? 2 : roll > 0.55 ? 1 : 0; }
-          this.out.attack(b.id, t.id, tier, calm ? Math.min(pw, 5) : pw);
+          const p2 = calm ? Math.min(pw, 5) : pw; this.out.attack(b.id, t.id, tier, p2, pickBossVariant(p2, this.time));
         }
       }
     }

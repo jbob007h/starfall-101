@@ -12,9 +12,12 @@ const G: Record<string, string> = {
   "8": "111101111101111", "9": "111101111001110",
   " ": "000000000000000", "!": "010010010000010", ".": "000000000000010", ",": "000000000010100",
   ":": "000010000010000", "/": "001001010100100", "-": "000000111000000", "+": "000010111010000",
-  "(": "010100100100010", ")": "010001001001010", "x": "000101010101000", "%": "101001010100101", "?": "110001010000010", "#": "101111101111101",
+  "=": "000111000111000", "(": "010100100100010", ")": "010001001001010", "x": "000101010101000", "%": "101001010100101", "?": "110001010000010", "#": "101111101111101",
   ">": "100010001010100", "<": "001010100010001", "'": "010010000000000", "*": "101010101000000",
 };
+/** Characters requested but not in the font (checked by the headless test). */
+export const MISSING = new Set<string>();
+(globalThis as any).__missingGlyphs = MISSING;
 export function textWidth(s: string, scale = 1) { return s.length * 4 * scale - scale; }
 export function drawText(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, color: string, scale = 1, align: "left" | "center" | "right" = "left", shadow?: string) {
   if (align !== "left") { const w = textWidth(s, scale); x -= align === "center" ? w / 2 : w; }
@@ -25,7 +28,7 @@ export function drawText(ctx: CanvasRenderingContext2D, s: string, x: number, y:
 function drawRaw(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, color: string, scale: number) {
   ctx.fillStyle = color;
   for (let i = 0; i < s.length; i++) {
-    let ch = s[i]; let g = G[ch] ?? G[ch.toUpperCase()]; if (!g) g = G["?"];
+    let ch = s[i]; let g = G[ch] ?? G[ch.toUpperCase()]; if (!g) { g = G["?"]; MISSING.add(ch); }
     for (let p = 0; p < 15; p++) if (g.charCodeAt(p) === 49) ctx.fillRect(x + (p % 3) * scale, y + ((p / 3) | 0) * scale, scale, scale);
     x += 4 * scale;
   }
