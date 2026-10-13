@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: starfall-101
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build && npm run build:server
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: LOBBY_TIMEOUT
+        value: "20"

@@ -1,0 +1,30 @@
+{
+  "name": "starfall-101",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --minify --target=es2020 --outfile=dist/main.js && cp index.html dist/index.html",
+    "dev": "esbuild src/main.ts --bundle --target=es2020 --outfile=dist/main.js --servedir=dist --watch",
+    "typecheck": "tsc",
+    "serve": "python3 -m http.server 8080 -d dist",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node18 --external:ws --outfile=server/dist/index.js",
+    "start": "node server/dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.64.0",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
