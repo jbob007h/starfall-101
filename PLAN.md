@@ -33,6 +33,9 @@ In-run drops:
 - Shield: blocks one hit or one incoming attack.
 - Lightning: for ~6s the ship auto-fires chain-lightning every ~0.2s at the nearest enemy, jumping to 2-3 more (works without holding fire; kills count toward chains). Timer shown in the bottom strip.
 - Bomb stock is capped at 5.
+- Drop rate: each normal kill has a 6% chance to drop a power-up; type is a weighted pick: Weapon Up 30%, Bomb 13%, Shield 19%, Chain Freeze 19%, Lightning 19%. (Mini-boss kills always drop one random power-up.)
+
+Regular enemies (formation and sent) are 11px-wide pixel sprites with matching ~7x6 hitboxes (20% larger than v1).
 
 ## Mini-bosses (sent at the top attack tier)
 The sender's side (sim/server) picks a design id per attack; designs unlock with match stage/attack power (newest favored):

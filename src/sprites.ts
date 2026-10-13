@@ -9,8 +9,8 @@ export const SHIP = [
   ".....c.....", "....cwc....", "....cwc....", "...cmwmc...", "...cmwmc...", "..cmmwmmc..",
   ".cmmcwcmmc.", "cmm.cwc.mmc", "cm..cwc..mc", "c...yyy...c", "....y.y....",
 ];
-export const SAUCER = ["..xxxxx..", ".xwxwxwx.", "xxxxxxxxx", "x.d.d.d.x", ".x.....x."];
-export const BUG = ["x.......x", ".x.xxx.x.", "..xxwxx..", ".xxdxdxx.", "xx.x.x.xx", "x.......x"];
+export const SAUCER = ["...xxxxx...", "..xxxxxxx..", ".xwxxwxxwx.", "xxxxxxxxxxx", "x.dd.d.dd.x", ".xx.....xx."]; // 11x6 (~20% larger)
+export const BUG = ["x.........x", ".x..xxx..x.", "..xxxwxxx..", ".xxxwwwxxx.", "xxdxxdxxdxx", "x..x...x..x", "x.........x"]; // 11x7
 export const BOSS = [
   ".......xxxxxxx.......", ".....xxwwwwwwwxx.....", "....xxwkkwwwkkwxx....", "...xxxwkkwwwkkwxxx...",
   "..xxxxxwwwwwwwxxxxx..", ".xxyxxyxxyxxyxxyxxyx.", "xxxxxxxxxxxxxxxxxxxxx", "xx.xx.xx.xx.xx.xx.xxx",

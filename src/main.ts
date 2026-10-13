@@ -23,6 +23,9 @@ const audio = new Audio();
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const ri = (a: number, b: number) => Math.floor(rnd(a, b + 1));
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+/** Power-up type weights for the 6% per-kill drop (must sum to 100). */
+const POWERUP_WEIGHTS: [string, number][] = [["W", 30], ["B", 13], ["S", 19], ["F", 19], ["L", 19]];
+function pickPowerup() { let r = Math.random() * 100; for (const [k, w] of POWERUP_WEIGHTS) { if ((r -= w) < 0) return k; } return "W"; }
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 
 // ---------- sprites ----------
@@ -319,7 +322,7 @@ class Game {
           for (let i = 0; i < n; i++) { const aa = a + (i - (n - 1) / 2) * 0.25; this.eb.push({ x: e.x, y: e.y, vx: Math.cos(aa) * bs, vy: Math.sin(aa) * bs, r: 2, col: e.col === SENT ? SENT_COL : MAG }); }
         }
       }
-      if (this.collidePlayer(e.x, e.y, 5)) this.hurt();
+      if (this.collidePlayer(e.x, e.y, 6)) this.hurt();
     }
     this.enemies = this.enemies.filter(e => !e.dead);
     for (const f of this.forms) if (!f.done && !this.enemies.some(e => e.form === f.id)) f.done = true;
@@ -429,7 +432,7 @@ class Game {
       if (f) { f.killed++; if (f.killed >= f.total && !f.lost) this.formClear(f, e); }
     } else if (f) f.lost = true;
     const nd = ri(1, 2); for (let i = 0; i < nd; i++) this.items.push({ x: e.x, y: e.y, vx: rnd(-20, 20), vy: rnd(-50, -10), kind: "dot", t: 0 });
-    if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pick(["W", "W", "B", "S", "F", "L"]), t: 0 });
+    if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pickPowerup(), t: 0 });
   }
   chainAdd(col: number, extra: number) {
     if (this.chain === 0) this.chainCol = col === SENT ? -1 : col;
@@ -474,7 +477,7 @@ class Game {
           else { this.parts.push({ x: b.x, y: b.y, vx: rnd(-40, 40), vy: rnd(20, 60), life: 0.15, max: 0.15, col: "#8090a0", s: 1 }); }
           b.y = -100; break;
         }
-        if (Math.abs(b.x - e.x) < 6 && Math.abs(b.y - e.y) < 5) {
+        if (Math.abs(b.x - e.x) < 7 && Math.abs(b.y - e.y) < 6) {
           e.hp -= b.dmg ?? 1; b.y = -100; this.parts.push({ x: b.x, y: b.y + 100 - 100, vx: 0, vy: 0, life: 0.05, max: 0.05, col: WHT, s: 2 });
           if (e.boss) audio.bossHit();
           if (e.hp <= 0) this.killEnemy(e, true); break;
