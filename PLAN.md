@@ -93,14 +93,17 @@ Juice:
 - The background sky fills with falling stars as players drop out, a living visual of the remaining field.
 - Final duel takes place under a huge meteor shower made of every eliminated player.
 
-## Adaptive music
-- Layered chiptune track that intensifies as players drop out:
-  - 101-75 left: base groove (bass + drums)
-  - 75-50: add arpeggio lead, tempo up
-  - 50-25: add melody and harder drums, tempo up again
-  - 25-10: full mix with driving percussion and filter sweeps
-  - Final 10 and final duel: max tempo, extra synth layer, heartbeat pulse on low health
-- Transitions are synced to the beat so layers drop in cleanly.
+## Adaptive music (Sega Genesis / Mega Drive style)
+- Engine (src/audio/genesis.ts): YM2612-style 4-operator FM (8 algorithms, op1 feedback, per-operator AR/D1R/SL/D2R/RR, MUL, DT), 5 FM channels + channel-6 DAC drums (procedural 8-bit ~13.3 kHz kick/snare/hats/crash/tom), SN76489-style PSG (2 square channels with stepped 2 dB envelopes + LFSR noise), stereo panning, light 8-bit quantiser + 12.5 kHz band limit for grit.
+- Sequencer (src/audio/sequencer.ts): tracker format; 16-row bar patterns with per-channel token lines (notes, chords, holds, rests, drum letters, velocity), order lists per stage, per-channel patches (with per-stage overrides), tempo. Notes are scheduled ~150 ms ahead on the AudioContext clock; stage changes apply on the next bar line (gapless).
+- Song "Starfall Overdrive" (src/audio/songs.ts), E minor, intensifies as players drop out:
+  - 101-75 LAUNCH 150 BPM: slap FM bass, DAC drums, e-piano chord hits
+  - 75-50 PURSUIT 156: 16th-note bass drive, PSG arpeggios, noise hats
+  - 50-25 ASSAULT 164: FM saw-lead melody, harder drums
+  - 25-10 OVERDRIVE 172: lead harmony, PSG echo, brass stabs, more crashes
+  - Final 10 FINAL BOSS 186: Phrygian boss riff, heavy FM bass, shredding FM lead runs, power-chord brass, 16th hats; final duel +8 BPM
+  - Heartbeat pulse on low health, locked to the beat.
+- Previews: `node music-preview.mjs` renders WAVs of every stage to music_preview/ via OfflineAudioContext.
 
 ## Controls
 - Keyboard: arrows/WASD move, hold Z/Space fire, Shift focus, X bomb, 1-4 targeting, Enter start, P pause.

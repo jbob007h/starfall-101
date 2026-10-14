@@ -1,5 +1,8 @@
+import { Sequencer } from "./sequencer";
+import { genesisOutput } from "./genesis";
+import { SONG } from "./songs";
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
-// Procedural chiptune SFX + layered adaptive music (Web Audio).
+// Procedural chiptune SFX + Genesis-style adaptive FM music (Web Audio).
 export class Audio {
   ctx: AudioContext | null = null;
   master!: GainNode; sfxBus!: GainNode; musBus!: GainNode; filter!: BiquadFilterNode;
@@ -14,7 +17,7 @@ export class Audio {
     this.master = c.createGain(); this.master.gain.value = 0.5; this.master.connect(c.destination);
     this.sfxBus = c.createGain(); this.sfxBus.gain.value = 0.6; this.sfxBus.connect(this.master);
     this.filter = c.createBiquadFilter(); this.filter.type = "lowpass"; this.filter.frequency.value = 9000; this.filter.Q.value = 6;
-    this.musBus = c.createGain(); this.musBus.gain.value = 0.35; this.filter.connect(this.musBus); this.musBus.connect(this.master);
+    this.musBus = c.createGain(); this.musBus.gain.value = 0.55; this.musBus.connect(this.master);
     const len = c.sampleRate; this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   }
@@ -73,40 +76,38 @@ export class Audio {
   tripleBomb() { const c = this.ctx; if (!c) return; const t = c.currentTime;
     for (let i = 0; i < 3; i++) { this.noiseHit(0.9, 0.6, 50, t + i * 0.18); this.tone(140 - i * 25, 0.9, "sawtooth", 0.3, 25, t + i * 0.18); this.tone(70, 0.6, "sine", 0.6, 30, t + i * 0.18); }
     [0, 4, 7, 12].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.2, "square", 0.12, 0, t + 0.6 + i * 0.06)); }
-  // ---- Music ----
-  setTier(t: number) { this.pendingTier = t; }
-  startMusic() { if (!this.ctx || this.playing) return; this.playing = true; this.step = 0; this.nextTime = this.ctx.currentTime + 0.1; this.timer = window.setInterval(() => this.schedule(), 25); }
-  stopMusic() { this.playing = false; clearInterval(this.timer); }
-  schedule() {
+  // ---- Music: Genesis-style FM tracker (see genesis.ts / sequencer.ts / songs.ts) ----
+  seq: Sequencer | null = null; private timer2 = 0; duel = false;
+  /** 0..4 = stage by players remaining (101-75, 75-50, 50-25, 25-10, final 10 = boss tune). Applied on the next bar line. */
+  setTier(t: number) { this.pendingTier = t; if (this.seq) { this.seq.pending = Math.max(0, Math.min(SONG.stages.length - 1, t)); this.seq.bpmBoost = this.duel ? 8 : 0; } }
+  startMusic() {
     const c = this.ctx; if (!c) return;
-    while (this.nextTime < c.currentTime + 0.12) { this.playStep(this.step, this.nextTime); this.nextTime += 60 / this.tempo / 4; this.step++; }
+    if (!this.seq) this.seq = new Sequencer(c, genesisOutput(c, this.musBus), SONG);
+    if (this.playing) return; this.playing = true;
+    this.seq.pending = this.pendingTier; this.seq.start(c.currentTime + 0.1); this.tier = this.pendingTier; this.beatT = c.currentTime + 0.1;
+    this.timer2 = window.setInterval(() => this.schedule(), 25);
   }
-  playStep(s: number, t: number) {
-    const bar = Math.floor(s / 16), i = s % 16;
-    if (i === 0) { // beat-synced layer transitions
-      this.tier = this.pendingTier; this.tempo = [112, 122, 134, 146, 162][this.tier];
-      if (this.tier >= 3) { this.filter.frequency.setValueAtTime(600, t); this.filter.frequency.exponentialRampToValueAtTime(9000, t + 60 / this.tempo * 4); }
-      else this.filter.frequency.setValueAtTime(9000, t);
-    }
-    const B = this.musBus === undefined ? undefined : this.filter;
-    const prog = [0, 0, -4, -2, 0, 0, 3, -2]; const root = 55 * Math.pow(2, (prog[bar % 8] + 3) / 12); // around C
-    const tr = this.tier;
-    // drums
-    if (i % 4 === 0) { this.tone(150, 0.12, "sine", 0.5, 40, t, B); }
-    if (tr >= 2 && (i === 6 || i === 14)) this.tone(150, 0.1, "sine", 0.35, 40, t, B);
-    if (i === 4 || i === 12) this.noiseHit(0.12, tr >= 2 ? 0.25 : 0.15, 1500, t, B);
-    if (i % 2 === 1 || tr >= 3) this.noiseHit(0.025, tr >= 3 ? 0.07 : 0.04, 7000, t, B);
-    // bass
-    const bpat = [0, 0, 12, 0, 0, 12, 0, 7, 0, 0, 12, 0, 10, 0, 7, 12];
-    if (i % 2 === 0 || tr >= 1) this.tone(root * Math.pow(2, bpat[i] / 12), 0.12, "square", 0.12, 0, t, B);
-    // arp
-    if (tr >= 1) { const ar = [0, 3, 7, 12, 15, 12, 7, 3]; this.tone(root * 4 * Math.pow(2, ar[i % 8] / 12), 0.07, "square", 0.04, 0, t, B); }
-    // melody
-    if (tr >= 2) {
-      const mel = [[12, -1, 15, -1, 19, -1, 17, 15, -1, 12, -1, 10, 12, -1, -1, -1], [15, -1, 12, -1, 10, 12, -1, 7, -1, 10, -1, 12, 15, -1, 19, -1]][bar % 2];
-      if (mel[i] >= 0) this.tone(root * 4 * Math.pow(2, mel[i] / 12), 0.18, "triangle", 0.12, 0, t, B);
-    }
-    if (tr >= 4 && i % 8 === 0) this.tone(root * 8, 0.3, "sawtooth", 0.03, root * 8.5, t, B);
-    if (this.lowHealth && (i === 0 || i === 3)) this.tone(60, 0.15, "sine", 0.5, 30, t);
+  stopMusic() { this.playing = false; this.seq?.stop(); clearInterval(this.timer2); }
+  private beatT = 0;
+  schedule() {
+    const c = this.ctx, q = this.seq; if (!c || !q) return;
+    q.scheduleUntil(c.currentTime + 0.15); this.tier = q.stage; this.tempo = q.bpm;
+    // heartbeat on low health, locked to the beat
+    while (this.beatT < c.currentTime + 0.15) { if (this.lowHealth) { this.tone(60, 0.15, "sine", 0.5, 30, this.beatT); this.tone(55, 0.12, "sine", 0.35, 28, this.beatT + 0.16); } this.beatT += 60 / q.bpm; }
   }
+}
+
+/** Offline preview: render `secs` of a music stage to a 16-bit stereo WAV (used by music-preview.mjs). */
+export async function renderMusicPreview(stage: number, secs: number, sr = 44100): Promise<ArrayBuffer> {
+  const oc = new OfflineAudioContext(2, Math.floor(sr * secs), sr);
+  const bus = oc.createGain(); bus.gain.value = 0.5; bus.connect(oc.destination);
+  const seq = new Sequencer(oc, genesisOutput(oc, bus), SONG); seq.pending = stage; seq.bpmBoost = stage >= 5 ? 8 : 0; seq.pending = Math.min(stage, SONG.stages.length - 1);
+  seq.start(0.05); seq.scheduleUntil(secs);
+  const buf = await oc.startRendering();
+  const n = buf.length, out = new DataView(new ArrayBuffer(44 + n * 4)), w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); out.setUint32(4, 36 + n * 4, true); w(8, "WAVE"); w(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 2, true);
+  out.setUint32(24, sr, true); out.setUint32(28, sr * 4, true); out.setUint16(32, 4, true); out.setUint16(34, 16, true); w(36, "data"); out.setUint32(40, n * 4, true);
+  const L = buf.getChannelData(0), R = buf.getChannelData(1);
+  for (let i = 0; i < n; i++) { out.setInt16(44 + i * 4, Math.max(-1, Math.min(1, L[i])) * 32767, true); out.setInt16(46 + i * 4, Math.max(-1, Math.min(1, R[i])) * 32767, true); }
+  return out.buffer;
 }

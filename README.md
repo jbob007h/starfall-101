@@ -27,6 +27,9 @@ Dots: +10 points and faster health regen (no bombs). Start with 3 bombs. Power-u
 Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHANTOM (hit when the eye opens); the design id travels with the attack (`variant`) online.
 Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 40 (mini-boss); bullet wave tier starts at chain 15.
 
+## Music
+Genesis-style FM soundtrack (src/audio/: genesis.ts synth, sequencer.ts tracker, songs.ts composition). Stage changes with players remaining; final 10 = boss tune. `node music-preview.mjs` (with `npm run serve`) writes per-stage WAVs to music_preview/.
+
 ## Networking
 `src/net.ts` defines `Transport` + `NetEvent` (lobbyJoin/Leave/Countdown, matchStart, attack, state, hit, ko, matchEnd, disconnected).
 - `LocalSimTransport`: offline, simulated lobby, runs `MatchSim` (src/sim.ts) in the browser.

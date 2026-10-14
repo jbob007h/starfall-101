@@ -48,7 +48,7 @@ while (Date.now() - t0 < 32000) {
 const s = await p.evaluate(() => { const g = window.__game; return { state: g.state, time: g.time, hp: g.hp, chain: g.chain, score: g.score, alive: g.aliveAI, enemies: g.enemies.length, projs: g.projs.length, warns: g.warns.length, fps: 0 }; });
 console.log(JSON.stringify(s));
 // push to an action-heavy moment: force time forward via fast-forward of simulation
-await p.evaluate(() => { const g = window.__game;  g.time = 200; g.hp = 3; g.inv = 99; for (let i = 0; i < 400; i++) g.update(1/60); g.chain = 20; g.eligible = true; g.cashIn(); g.hitstop = 0; });
+await p.evaluate(() => { const g = window.__game; if (g.state !== "play") g.reset([]); g.time = 200; g.hp = 3; g.inv = 99; for (let i = 0; i < 400; i++) g.update(1/60); g.chain = 20; g.eligible = true; g.cashIn(); g.hitstop = 0; });
 await p.waitForTimeout(400);
 await p.evaluate(() => { const g = window.__game; g.chain = 45; g.eligible = true; g.cashIn(); g.hitstop = 0; });
 await p.evaluate(() => { const g = window.__game; g.warns.push({ t: 0.01, tier: 2, power: 20, sender: 4, x: 100 }, { t: 0.01, tier: 0, power: 12, sender: 7, x: 60 }); });
@@ -84,6 +84,11 @@ console.log("incoming boss variant spawned:", await p.evaluate(() => window.__ga
 await p.evaluate(() => { const g = window.__game; g.bombs = 5; g.chain = 8; g.chainT = 2; g.spawnFormation(6, 1, 3, false, -1); g.collect({ kind: "B", x: 0, y: 0, vx: 0, vy: 0, t: 0 }); });
 await p.waitForTimeout(150); await p.screenshot({ path: "triple_bomb.png" }); await p.waitForTimeout(600);
 console.log("triple bomb [bombs, chain>0, queue]:", await p.evaluate(() => { const g = window.__game; return [g.bombs, g.chain > 0, g.tripleQ.length]; }));
+const m0 = await p.evaluate(() => ({ stage: window.__audio.tier, bpm: window.__audio.tempo }));
+await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; g.rivals.forEach((r, i) => { if (i >= 6) r.alive = false; }); });
+await p.waitForTimeout(2600);
+console.log("music stage before -> after field shrinks to 7:", m0, "->");
+console.log("music:", await p.evaluate(() => { const a = window.__audio; return { playing: a.playing, stage: a.tier, bpm: a.tempo, bar: a.seq && a.seq.bar }; }));
 console.log("missing glyphs:", await p.evaluate(() => [...window.__missingGlyphs].join("")));
 const fps = await p.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { n++; if (performance.now() - t < 1000) requestAnimationFrame(f); else r(n); }; requestAnimationFrame(f); }));
 console.log("fps", fps, "errors:", errs);

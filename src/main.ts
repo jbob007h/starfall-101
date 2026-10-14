@@ -1,5 +1,5 @@
 import { drawText, textWidth } from "./font";
-import { Audio } from "./audio";
+import { Audio, renderMusicPreview } from "./audio";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport } from "./net";
 import { makeSprite, drawSprite, SHIP, SAUCER, BUG, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
 
@@ -216,7 +216,7 @@ class Game {
     this.updatePlayer(dt); this.updateChain(dt); this.spawnFormations(dt); this.updateEnemies(dt); this.updateBullets(dt);
     this.updateItems(dt); this.updateWaves(dt); this.updateWarns(dt); this.net.tick(dt, this.hints()); this.updateRivals(dt); this.updateProjs(dt); this.updateFx(dt);
     this.randCd -= dt; this.computeTargets();
-    const rem = this.remaining; audio.setTier(rem > 75 ? 0 : rem > 50 ? 1 : rem > 25 ? 2 : rem > 10 ? 3 : 4); audio.lowHealth = this.hp === 1;
+    const rem = this.remaining; audio.duel = this.duel; audio.setTier(rem > 75 ? 0 : rem > 50 ? 1 : rem > 25 ? 2 : rem > 10 ? 3 : 4); audio.lowHealth = this.hp === 1;
   }
 
   updatePlayer(dt: number) {
@@ -892,7 +892,7 @@ class Game {
   }
 }
 
-const game = new Game(); game.bindNet(); (window as any).__game = game;
+const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview;
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60;
