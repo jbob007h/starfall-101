@@ -8,7 +8,7 @@ import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_
 
 // ---------- constants ----------
 const W = 640, H = 360;
-const LB_ROWS = 26;
+const LB_ROWS = 23;
 const PX = 184, PY = 4, PW = 272, PH = 324; const BY = PY + PH + 3; // bottom HUD strip // playfield
 const COLORS = ["#ff3cc8", "#3cf0ff", "#ffe040", "#60ff80"];
 const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
@@ -223,10 +223,27 @@ class Game {
     });
     const sbH = LB_ROWS * 10, th = Math.max(8, sbH * LB_ROWS / 101); ctx.fillStyle = DIM; ctx.fillRect(x + w - 5, top + 10, 2, sbH);
     ctx.fillStyle = CYA; ctx.fillRect(x + w - 5, top + 10 + Math.round((sbH - th) * this.lbScroll / (101 - LB_ROWS)), 2, th);
-    drawText(ctx, (pad.connected ? "STICK" : "UP/DOWN") + " SCROLL   " + (pad.connected ? "START" : "ENTER") + ": PLAY AGAIN", x + w / 2, y + h - 11, CYA, 1, "center");
-    if (this.spec >= 0) drawText(ctx, (pad.connected ? "Y" : "L") + ": BACK TO SPECTATING " + (this.rivals[this.spec]?.name ?? ""), x + w / 2, y + h - 21, YEL, 1, "center");
-    else if (this.state === "over" && this.net.online && !this.specIds().length && this.rivals.some(r => !r.isBot)) drawText(ctx, "NO HUMAN PILOTS LEFT TO SPECTATE", x + w / 2, y + h - 21, "#8070b0", 1, "center");
+    this.renderEndMenu(x, y + h - 26, w);
+    drawText(ctx, (pad.connected ? "STICK" : "UP/DOWN") + " SCROLL  " + (pad.connected ? "D-PAD" : "LEFT/RIGHT") + " PICK  " + this.endHint(), x + w / 2, y + h - 10, CYA, 1, "center");
+    if (this.spec >= 0) drawText(ctx, (pad.connected ? "Y" : "L") + ": BACK TO SPECTATING " + (this.rivals[this.spec]?.name ?? ""), x + w / 2, y + h - 36, YEL, 1, "center");
+    else if (this.state === "over" && this.net.online && !this.specIds().length && this.rivals.some(r => !r.isBot)) drawText(ctx, "NO HUMAN PILOTS LEFT TO SPECTATE", x + w / 2, y + h - 36, "#8070b0", 1, "center");
   }
+  endSel = 0; pauseSel = 0;
+  /** Leave the current lobby/match/spectating session and go back to the title screen (music reset, ready for a new match). */
+  quitToTitle() {
+    this.stopSpectate(); this.watched = false; this.net.leaveLobby();
+    this.paused = false; this.dead = false; this.duel = false; this.endSel = 0; this.pauseSel = 0; this.titleSel = 0; this.lobbyVoted = false; this.lobbyCd = -1; this.cutIn = null;
+    audio.stopMusic(); audio.setRemaining(101, false); keys.clear();
+    this.state = "title"; this.titleT = 0; audio.tone(330, 0.04, "square", 0.06);
+  }
+  /** NEW MATCH / TITLE SCREEN selector drawn on all post-match screens. */
+  renderEndMenu(x: number, y: number, w: number) {
+    const items = ["NEW MATCH", "TITLE SCREEN"], bw = 84, gap = 8, x0 = x + (w - bw * 2 - gap) / 2;
+    items.forEach((t, i) => { const bx = x0 + i * (bw + gap), sel = i === this.endSel, bl = sel && Math.floor(this.realT * 4) % 2;
+      ctx.fillStyle = sel ? "#2a0838" : "#0c0418"; ctx.fillRect(bx, y, bw, 13); ctx.strokeStyle = sel ? (bl ? YEL : CYA) : DIM; ctx.strokeRect(bx + 0.5, y + 0.5, bw - 1, 12);
+      drawText(ctx, (sel ? "> " : "") + t, bx + bw / 2, y + 4, sel ? YEL : "#8070b0", 1, "center"); });
+  }
+  endHint() { return pad.connected ? "A/START SELECT  B TITLE" : "ENTER SELECT  ESC TITLE"; }
   startLobby() { this.spec = -1; this.specSnaps = []; this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.net.joinLobby(this.name); }
   onNet(e: NetEvent) {
     switch (e.type) {
@@ -291,7 +308,7 @@ class Game {
     if (this.state !== "play") {
       this.updateFx(dt);
       if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
-      if (this.state === "lobby") { this.tickLobby(dt); if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
+      if (this.state === "lobby") { this.tickLobby(dt); if (hit("Escape", "PadB")) { this.quitToTitle(); return; } if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
       if (this.state === "title") {
         if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 2) % 3; audio.tone(520, 0.04, "square", 0.05); }
         if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 3; audio.tone(520, 0.04, "square", 0.05); }
@@ -306,18 +323,28 @@ class Game {
         if (this.specOn()) { // spectating: switch between live humans
           const d = (hit("ArrowRight", "PadRB", "PadRight") || actHit("right") ? 1 : 0) - (hit("ArrowLeft", "PadLB", "PadLeft") || actHit("left") ? 1 : 0);
           if (d) this.cycleSpec(d);
-          if (this.realT - this.endT > 0.6 && hit("Enter", "KeyR", "PadStart")) this.startLobby();
+          if (this.realT - this.endT > 0.6) { if (hit("Escape", "PadB")) this.quitToTitle(); else if (hit("Enter", "KeyR", "PadStart")) this.startLobby(); }
           return;
         }
         const d = (down("ArrowDown", "KeyS") || pad.ay > 0.5 ? 1 : 0) - (down("ArrowUp", "KeyW") || pad.ay < -0.5 ? 1 : 0);
         if (hit("PageDown")) this.lbScroll += 20; if (hit("PageUp")) this.lbScroll -= 20;
         if (d) { this.lbRep -= dt; if (this.lbRep <= 0) { this.lbScroll += d; this.lbRep = this.lbRep < -1 ? 0.06 : 0.12; } } else this.lbRep = 0;
         this.lbScroll = clamp(this.lbScroll, 0, 101 - LB_ROWS);
-        if (this.realT - this.endT > 0.6 && hit("Enter", "KeyR", "PadStart")) this.startLobby();
+        if (hit("ArrowLeft", "ArrowRight", "KeyA", "KeyD", "PadLeft", "PadRight", "Tab") || actHit("left") || actHit("right")) { this.endSel ^= 1; audio.tone(520, 0.04, "square", 0.05); }
+        if (this.realT - this.endT > 0.6) {
+          if (hit("Escape", "PadB", "KeyT")) this.quitToTitle();
+          else if (hit("KeyR")) this.startLobby();
+          else if (hit("Enter", "Space", "PadStart", "PadA") || actHit("fire")) { if (this.endSel) this.quitToTitle(); else this.startLobby(); }
+        }
       }
       return;
     }
-    if (hit("Escape", "PadStart") || actHit("pause")) this.paused = !this.paused;
+    if (hit("Escape", "PadStart") || actHit("pause")) { this.paused = !this.paused; this.pauseSel = 0; }
+    else if (this.paused) {
+      if (hit("ArrowUp", "ArrowDown", "KeyW", "KeyS", "PadUp", "PadDown") || actHit("up") || actHit("down")) { this.pauseSel ^= 1; audio.tone(520, 0.04, "square", 0.05); }
+      else if (hit("PadB")) this.paused = false;
+      else if (hit("Enter", "PadA", "KeyQ")) { if (this.pauseSel || hit("KeyQ")) { this.quitToTitle(); return; } this.paused = false; }
+    }
     if (actHit("mute")) audio.toggleMute();
     if (actHit("song")) { audio.setSoundtrack(audio.soundtrack + 1); this.popup("MUSIC: " + audio.soundtrackName, PW / 2, PH - 84, CYA, 1.5); }
     if (this.paused) return;
@@ -853,7 +880,7 @@ class Game {
   }
   renderSpecBanner() {
     const r = this.rivals[this.spec]; if (!r) return;
-    const ids = this.specIds(), n = ids.length, i = ids.indexOf(this.spec) + 1, x = PX + 4, w = PW - 8, h = 30, y = PY + 18;
+    const ids = this.specIds(), n = ids.length, i = ids.indexOf(this.spec) + 1, x = PX + 4, w = PW - 8, h = 40, y = PY + 18;
     // highlight the watched pilot's grid cell
     const cp = this.cellPos(r.id), bl = Math.floor(this.realT * 4) % 2; ctx.lineWidth = 2; ctx.strokeStyle = bl ? CYA : WHT; ctx.strokeRect(cp.x - 1, cp.y - 1, CELL_W + 2, CELL_H + 2); ctx.lineWidth = 1;
     ctx.fillStyle = "rgba(6,2,14,0.86)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, CYA);
@@ -861,8 +888,9 @@ class Game {
     drawText(ctx, "LIVE", x + 11, y + 4, SENT_COL, 1);
     drawText(ctx, "SPECTATING " + r.name, x + w / 2, y + 3, YEL, 2, "center", "#000");
     if (n > 1) drawText(ctx, i + "/" + n, x + w - 5, y + 4, CYA, 1, "right");
-    const hint = pad.connected ? "< LB / RB > SWITCH PILOT   Y LEADERBOARD   START NEW MATCH" : "< LEFT / RIGHT > SWITCH PILOT   L LEADERBOARD   ENTER NEW MATCH";
+    const hint = pad.connected ? "< LB / RB > SWITCH PILOT   Y LEADERBOARD" : "< LEFT / RIGHT > SWITCH PILOT   L LEADERBOARD";
     drawText(ctx, hint, x + w / 2, y + 20, "#b080ff", 1, "center");
+    drawText(ctx, pad.connected ? "START: NEW MATCH    B: TITLE SCREEN" : "ENTER: NEW MATCH    ESC: TITLE SCREEN", x + w / 2, y + 30, YEL, 1, "center");
     if (!this.specSnaps.length) drawText(ctx, "CONNECTING TO " + r.name + "...", PX + PW / 2, PY + PH / 2, CYA, 1, "center");
     if (this.specMsgT > 0) drawText(ctx, this.specMsg, PX + PW / 2, PY + 40, YEL, 1, "center", "#000");
   }
@@ -954,7 +982,7 @@ class Game {
     try { this.renderMain(sx, sy); } finally { if (sv) Object.assign(this, saved); }
     if (this.specOn()) this.renderSpecBanner();
     this.drawPadMsg();
-    if (this.paused) this.centerBox(["PAUSED", kn("pause") + " / START TO RESUME"], CYA);
+    if (this.paused) this.renderPause();
     if (this.duel && this.state === "play" && !this.dead) this.renderDuelBar();
     if (this.state === "over" && this.realT - this.endT > 0.5 && !this.specOn()) this.renderLeaderboard(false);
     if (this.state === "win" && this.realT - this.endT > 4.5) this.renderLeaderboard(true);
@@ -1011,6 +1039,14 @@ class Game {
     for (let i = 0; i < DUEL_HP; i++) { ctx.fillStyle = i < r.hp ? (fl ? WHT : i < 4 ? "#ff3040" : MAG) : DIM; ctx.fillRect(Math.round(x + i * seg), y + 10, Math.ceil(seg) - 2, 6); }
   }
   drawPadMsg() { if (this.padMsgT > 0) { const w = textWidth(this.padMsg, 1) + 16; ctx.fillStyle = "#000"; ctx.fillRect((W - w) / 2, 2, w, 13); this.frame((W - w) / 2, 2, w, 13, "#60ff80"); drawText(ctx, this.padMsg, W / 2, 6, "#60ff80", 1, "center"); } }
+  renderPause() {
+    const w = 196, h = 84, x = PX + (PW - w) / 2, y = PY + PH / 2 - h / 2;
+    ctx.fillStyle = "rgba(6,2,14,0.88)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, CYA);
+    drawText(ctx, "PAUSED", PX + PW / 2, y + 8, CYA, 3, "center", "#000");
+    ["RESUME", this.net.online ? "QUIT TO TITLE (FORFEIT)" : "QUIT TO TITLE"].forEach((t, i) => { const sel = i === this.pauseSel;
+      drawText(ctx, (sel ? "> " : "") + t + (sel ? " <" : ""), PX + PW / 2, y + 34 + i * 12, sel ? YEL : "#8070b0", 1, "center"); });
+    drawText(ctx, pad.connected ? "D-PAD PICK  A SELECT  START/B RESUME" : "UP/DOWN PICK  ENTER SELECT  " + kn("pause") + "/ESC RESUME", PX + PW / 2, y + h - 12, CYA, 1, "center");
+  }
   centerBox(lines: string[], col: string) {
     const w = 196, h = 20 + lines.length * 14, x = PX + (PW - w) / 2, y = PY + PH / 2 - h / 2;
     ctx.fillStyle = "rgba(6,2,14,0.88)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, col);

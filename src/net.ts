@@ -77,7 +77,7 @@ export class LocalSimTransport implements Transport {
     this.humanTarget = Math.floor(rnd(this.humansMin, this.humansMax + 1));
     this.emit({ type: "lobbyJoin", player: { id: LOCAL, name, isBot: false }, count: 1 });
   }
-  leaveLobby() { this.phase = "idle"; }
+  leaveLobby() { this.phase = "idle"; this.sim = null; this.countdown = -1; this.lobby = []; }
   requestStart() { if (this.phase === "lobby") { this.fillBots(); this.countdown = 0.01; } }
   sendAttack(to: number, tier: Tier, power: number) { this.sim?.humanAttack(this.map.me, this.map.toGlobal(to), tier, power); }
   sendState(hp: number, badges: number, targets: number[], armed: boolean) { this.sim?.humanState(this.map.me, hp, badges, targets.map(t => this.map.toGlobal(t)), armed); }

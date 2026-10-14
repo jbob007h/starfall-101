@@ -35,7 +35,7 @@ bb = await B(); ok(bb.pad.fire[0] === "B3", "controller: FIRE bound to Y");
 await tap(0); await ev(() => window.__pad.gp.axes = [0, 0, 0, -1]); await wait(120); await ev(() => window.__pad.gp.axes = [0, 0, 0, 0]); await wait(100);
 bb = await B(); ok(bb.pad.fire[0] === "A3-" && bb.pad.tgt0[0] === "B3", "controller: stick direction bindable, swap with TARGET RANDOM");
 await wait(100); await p.screenshot({ path: "controls_pad.png" });
-for (let i = 0; i < 11; i++) await tap(13); // down to RESET row (row 4 -> 15)
+for (let i = 0; i < 12; i++) await tap(13); // down to RESET row (row 4 -> 16)
 await tap(0); bb = await B(); ok(bb.pad.fire[0] === "B0" && bb.pad.bomb[0] === "B7" && bb.key.fire[0] === "KeyX", "reset restores controller defaults only");
 await tap(1); ok(await ev(() => window.__game.state) === "title", "B backs out to title");
 // persisted + applied in game
@@ -53,6 +53,27 @@ await ev(() => window.__pad.set(0, true)); await wait(300); ok(await ev(() => wi
 await ev(() => window.__pad.set(2, true)); await wait(100); ok(await ev(() => window.__game.focus), "controller X focuses"); await ev(() => window.__pad.set(2, false));
 await ev(() => window.__pad.gp.axes = [0.9, 0, 0, 0]); const x0 = await ev(() => window.__game.px); await wait(300); ok(await ev(() => window.__game.px) > x0 + 10, "left stick moves"); await ev(() => window.__pad.gp.axes = [0, 0, 0, 0]);
 await ev(() => window.__pad.gp.axes = [0, 0, -1, 0]); await wait(120); await ev(() => window.__pad.gp.axes = [0, 0, 0, 0]); await wait(100); ok(await ev(() => window.__game.mode) === 3, "right stick left = BADGES targeting");
+// ---- return to title (offline): pause menu, game-over menu, victory menu; then start again
+await ev(() => { window.__pad.on = false; }); await wait(150);
+const st = () => ev(() => [window.__game.state, window.__audio.playing, window.__game.paused]);
+await key("Escape"); ok(await ev(() => window.__game.paused), "Esc pauses");
+await key("ArrowDown"); await key("Enter"); let s1 = await st(); ok(s1[0] === "title" && !s1[1] && !s1[2], "pause > QUIT TO TITLE: title, music stopped, unpaused");
+const again = async lbl => { await key("Enter"); await key("Enter"); await wait(300); await key("Enter"); await wait(900); const s = await st(); ok(s[0] === "play" && s[1], lbl); };
+await again("new match after quitting from pause");
+await ev(() => { const g = window.__game; g.inv = 0; g.gameOver(); }); await wait(900);
+await key("ArrowRight"); ok(await ev(() => window.__game.endSel) === 1, "game over: RIGHT selects TITLE SCREEN");
+await wait(200); await p.screenshot({ path: "endmenu.png" });
+await key("Enter"); s1 = await st(); ok(s1[0] === "title" && !s1[1], "game over > TITLE SCREEN");
+await again("new match after game over -> title");
+await ev(() => { const g = window.__game; g.inv = 0; g.gameOver(); }); await wait(900);
+await key("Enter"); ok(await ev(() => window.__game.state) === "lobby", "game over > NEW MATCH (default) goes to lobby");
+await key("Escape"); ok(await ev(() => window.__game.state) === "title", "Esc in lobby returns to title");
+await again("new match after lobby -> title");
+await ev(() => { const g = window.__game; g.inv = 1e9; for (const r of g.rivals) { r.alive = false; r.place = r.place || 2; } }); await wait(800);
+ok(await ev(() => window.__game.state) === "win", "victory screen");
+await ev(() => { window.__pad.on = true; }); await wait(200); await tap(1); s1 = await st(); ok(s1[0] === "title" && !s1[1], "victory: controller B -> title");
+await tap(9); await tap(9); await wait(300); await tap(9); await wait(900); ok(await ev(() => window.__game.state) === "play", "controller: new match after victory -> title");
+await tap(9); await tap(13); await tap(0); ok(await ev(() => window.__game.state) === "title", "controller: pause > QUIT TO TITLE");
 await ev(() => localStorage.removeItem("sf101binds"));
 console.log("missing glyphs:", await ev(() => [...window.__missingGlyphs].join("")), "errors:", errs); if (errs.length) process.exitCode = 1;
 await b.close();

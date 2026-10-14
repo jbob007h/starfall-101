@@ -70,5 +70,20 @@ await pages[0].waitForTimeout(600); ok((await specInfo(pages[0])).snaps > s3.sna
 await ev(pages[1], () => { const g = window.__game; g.inv = 0; g.dead = false; g.gameOver(); }); await pages[0].waitForTimeout(1200);
 const s4 = await specInfo(pages[0]); console.log("no humans left:", JSON.stringify(s4)); ok(s4.spec === null, "falls back to the leaderboard when no humans remain");
 await pages[0].screenshot({ path: "spectate_end.png" });
+// ---- online: ALPHA returns to the title from the end screen, then BRAVO+ALPHA play a new match
+await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(300);
+ok(await ev(pages[0], () => [window.__game.state, window.__game.spec, window.__audio.playing].join()) === "title,-1,false", "ALPHA: Esc on end screen -> title, spectating stopped, music stopped");
+await ev(pages[1], () => { window.__game.quitToTitle(); });
+for (const p of [pages[0], pages[1]]) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(400); }
+const lb = await Promise.all([0, 1].map(i => ev(pages[i], () => [window.__game.state, window.__game.lobbyHumans])));
+console.log("relobby:", JSON.stringify(lb)); ok(lb.every(x => x[0] === "lobby" && x[1] === 2), "both rejoin the online lobby after leaving to title");
+for (const p of [pages[0], pages[1]]) await p.keyboard.press("Enter");
+await pages[0].waitForTimeout(1500);
+const nm = await Promise.all([0, 1].map(i => ev(pages[i], () => [window.__game.state, window.__game.rivals.filter(r => !r.isBot).map(r => r.name).join()])));
+console.log("new match:", JSON.stringify(nm)); ok(nm[0][0] === "play" && nm[0][1] === "BRAVO" && nm[1][1] === "ALPHA", "new online match starts with both humans");
+// quit mid-match from the pause menu: server KOs ALPHA for BRAVO
+await pages[0].keyboard.press("Escape"); await pages[0].keyboard.press("ArrowDown"); await pages[0].keyboard.press("Enter"); await pages[0].waitForTimeout(800);
+ok(await ev(pages[0], () => window.__game.state) === "title", "online pause > QUIT TO TITLE");
+ok(await ev(pages[1], () => !window.__game.rivals.find(r => r.name === "ALPHA").alive), "server KOs the pilot who quit");
 console.log("errors:", errs); if (errs.length) process.exitCode = 1;
 await b.close();
