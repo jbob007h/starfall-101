@@ -97,9 +97,9 @@ console.log("triple bomb [bombs, chain>0, queue]:", await p.evaluate(() => { con
 await p.evaluate(() => { const g = window.__game; let pl = 101; g.rivals.forEach((r, i) => { if (i >= 45 && r.alive) { r.alive = false; r.place = pl--; r.koT = 1; } }); });
 await p.waitForTimeout(3500);
 await p.evaluate(() => { const g = window.__game; g.chain = 40; g.eligible = true; g.cashIn(true); });
-await p.waitForTimeout(250); await p.screenshot({ path: "cutin.png" });
+await p.waitForTimeout(250); await p.screenshot({ path: "cutin2.png" });
 await p.waitForTimeout(1500);
-await p.screenshot({ path: "screenshot13.png" });
+await p.screenshot({ path: "screenshot13.png" }); await p.screenshot({ path: "screenshot15.png" });
 console.log("fx:", await p.evaluate(() => ({ crt: true, vStage: window.__game.vStage, bgW: window.__game.bgW.map(x => +x.toFixed(2)), fps: Math.round(window.__fps) })));
 await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; g.time = 330; g.enemies.length = 0; g.eb.length = 0; for (let i = 0; i < 4; i++) g.spawnFormation(6, i, i % 3, false, -1); });
 await p.waitForTimeout(2600);

@@ -1,7 +1,7 @@
 import { drawText, textWidth } from "./font";
 import { Audio, renderMusicPreview } from "./audio";
 import { DUEL_HP } from "./sim";
-import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
+import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport } from "./net";
 import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_UP1, BUG_UP2, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
 
@@ -173,6 +173,7 @@ class Game {
   bgW = [1, 0, 0, 0, 0]; ripples: { x: number; y: number; t: number; gold: boolean }[] = []; cutIn: { t: number; name: string } | null = null; warpT = 0;
   winStars: { x: number; y: number; sx: number; sy: number; at: number; col: string }[] = []; winT = 0; coreGrad: CanvasGradient | null = null;
   get vStage() { const r = this.remaining; return this.duel ? 4 : r > 75 ? 0 : r > 50 ? 1 : r > 25 ? 2 : r > 10 ? 3 : 4; }
+  hue() { return STAGE_HUE[this.state === "play" || this.state === "over" || this.state === "win" ? this.vStage : 0]; }
   pal(col?: string) { const p = STAGE_PAL[this.state === "play" || this.state === "over" || this.state === "win" ? this.vStage : 1]; return col ? [col, p[0], p[1], col, p[2], p[3], col, p[4]] : p; }
   nameBuf: string[] = []; namePos = 0; myKos = 0; myKoBy = -2; lbScroll = 0; lbRep = 0;
   openName() { typed.length = 0; this.state = "name"; this.nameBuf = this.name.split("").slice(0, 10); this.namePos = this.nameBuf.length; audio.init(); }
@@ -791,16 +792,16 @@ class Game {
     if (this.state === "over" && this.realT - this.endT > 0.5) this.renderLeaderboard(false);
     if (this.state === "win" && this.realT - this.endT > 4.5) this.renderLeaderboard(true);
   }
-  renderCutIn() {
+  renderCutIn() { // thin strip sliding along the top edge of the play area
     const c = this.cutIn!, t = c.t, e = t < 0.14 ? t / 0.14 : t > 0.68 ? Math.max(0, 1 - (t - 0.68) / 0.22) : 1, out = t > 0.68;
-    const by = PY + Math.round(PH * 0.3), bh = 54, ox = Math.round((1 - e) * (out ? PW : -PW));
-    ctx.save(); ctx.beginPath(); ctx.rect(PX, PY, PW, PH); ctx.clip(); ctx.translate(PX + ox, by);
-    ctx.fillStyle = "rgba(20,4,30,0.92)"; ctx.fillRect(0, 0, PW, bh);
-    for (let i = 0; i < 9; i++) { const lx = ((i * 41 + t * 900) % (PW + 40)) - 20; ctx.fillStyle = i % 2 ? "rgba(255,48,208,0.35)" : "rgba(255,230,80,0.3)"; ctx.fillRect(Math.round(lx), 6 + (i * 13) % (bh - 12), 22, 1); }
-    ctx.fillStyle = YEL; ctx.fillRect(0, 0, PW, 2); ctx.fillRect(0, bh - 2, PW, 2); ctx.fillStyle = MAG; ctx.fillRect(0, 3, PW, 1); ctx.fillRect(0, bh - 4, PW, 1);
-    ctx.fillStyle = "#000"; ctx.fillRect(6, 4, 46, 46); cycleRect(ctx, 6, 4, 46, 46, STAGE_PAL[4], this.realT); ctx.drawImage(pilotSpr, 8, 6, 42, 42);
-    ctx.drawImage(bossSpr, PW - 52, 14, 42, 20);
-    drawText(ctx, "MINI-BOSS SENT!", 60, 12, YEL, 2, "left", "#401000"); drawText(ctx, "INCOMING FOR " + c.name, 60, 34, WHT, 1);
+    const bh = 24, ox = Math.round((1 - e) * (out ? PW : -PW));
+    ctx.save(); ctx.beginPath(); ctx.rect(PX, PY, PW, PH); ctx.clip(); ctx.translate(PX + ox, PY + 1);
+    ctx.fillStyle = "rgba(20,4,30,0.9)"; ctx.fillRect(0, 0, PW, bh);
+    for (let i = 0; i < 6; i++) { const lx = ((i * 53 + t * 900) % (PW + 40)) - 20; ctx.fillStyle = i % 2 ? "rgba(255,48,208,0.35)" : "rgba(255,230,80,0.3)"; ctx.fillRect(Math.round(lx), 4 + (i * 7) % (bh - 8), 18, 1); }
+    ctx.fillStyle = YEL; ctx.fillRect(0, bh - 1, PW, 1); ctx.fillStyle = MAG; ctx.fillRect(0, bh - 2, PW, 1);
+    ctx.fillStyle = "#000"; ctx.fillRect(2, 1, 22, 22); ctx.drawImage(pilotSpr, 3, 2, 20, 20); ctx.strokeStyle = YEL; ctx.strokeRect(2.5, 1.5, 21, 21);
+    drawText(ctx, "MINI-BOSS SENT!", 30, 4, YEL, 1); drawText(ctx, "INCOMING FOR " + c.name, 30, 14, WHT, 1);
+    ctx.drawImage(bossSpr, PW - 46, 2, 42, 20);
     ctx.restore();
   }
   buildWinStars() {
@@ -833,7 +834,7 @@ class Game {
     lines.forEach((l, i) => { const big = i === 0; drawText(ctx, l, PX + PW / 2, y + 10 + i * 14 + (big ? -2 : 2), big ? col : WHT, big ? 3 : 1, "center", big ? "#000" : undefined); });
   }
   frame(x: number, y: number, w: number, h: number, col: string) {
-    if (!fxCfg.low) { ctx.strokeStyle = col; ctx.globalAlpha = 0.35; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); ctx.globalAlpha = 1; cycleRect(ctx, x, y, w, h, this.pal(col), this.realT); return; }
+    if (!fxCfg.low) { ctx.strokeStyle = col; ctx.globalAlpha = 0.35; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); ctx.globalAlpha = 1; cycleRect(ctx, x, y, w, h, this.hue(), this.realT); return; }
     ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); ctx.globalAlpha = 0.35; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); ctx.globalAlpha = 1; }
 
   renderLobby() {
@@ -950,7 +951,7 @@ class Game {
       if (r.flash > 0 && Math.floor(this.realT * 20) % 2) bc = WHT;
       if (this.targets.includes(r.id)) bc = YEL;
       ctx.strokeStyle = bc; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-      if (!big && !fxCfg.low) { ctx.globalAlpha = 0.7; cometRect(ctx, x, y, w, h, STAGE_PAL[this.vStage][(r.id % 3) + 1], this.realT * 0.35 + r.seed); ctx.globalAlpha = 1; }
+      if (!big && !fxCfg.low) { ctx.globalAlpha = 0.5; cometRect(ctx, x, y, w, h, this.hue(), this.realT * 0.35 + r.seed); ctx.globalAlpha = 1; }
       drawText(ctx, String(r.id + 1), x + 2, y + 2, this.targets.includes(r.id) ? YEL : r.isBot ? "#9080c0" : "#60ff80", 1);
       if (r.badges > 0) { ctx.fillStyle = YEL; for (let i = 0; i < Math.min(4, r.badges); i++) ctx.fillRect(x + 2 + i * 3, y + h - 9, 2, 2); }
       if (r.target === -1 && !big) { ctx.fillStyle = SENT_COL; ctx.fillRect(x + w - 2, y + 2, 1, 5); }

@@ -66,12 +66,23 @@ export function scrollTile(g: CanvasRenderingContext2D, tile: HTMLCanvasElement,
   if (alpha < 0.01) return; const th = tile.height, o = ((off % th) + th) % th;
   g.globalAlpha = alpha; g.drawImage(tile, 0, o - th); g.drawImage(tile, 0, o); g.globalAlpha = 1;
 }
-/** Palette-cycled border: colour bands travel around the rectangle's perimeter. */
-export function cycleRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, pal: string[], t: number, seg = 3, band = 10) {
+export const STAGE_HUE = ["#00d8ff", "#4a8cff", "#e040ff", "#ff2a90", "#ff3418"];
+const shadeCache = new Map<string, string[]>();
+/** 32 smooth shades of one hue: dim -> full -> near-white highlight. */
+export function shades(hex: string) {
+  let s = shadeCache.get(hex); if (s) return s;
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16); s = [];
+  for (let i = 0; i < 32; i++) { const k = i / 31, m = 0.22 + 0.78 * Math.min(1, k * 1.25), w = Math.max(0, k - 0.8) / 0.2 * 0.55;
+    const f = (c: number) => Math.round(Math.min(255, c * m + (255 - c * m) * w)).toString(16).padStart(2, "0"); s.push("#" + f(r) + f(g) + f(b)); }
+  shadeCache.set(hex, s); return s;
+}
+/** Palette-cycled border: a smooth single-hue gradient chases around the rectangle's perimeter. */
+export function cycleRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, hue: string, t: number, seg = 2, period = 90) {
   x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
-  const P = 2 * (w + h) - 4, n = pal.length, sh = t * 60;
+  const P = 2 * (w + h) - 4, sh = t * 70, pal = shades(hue);
   for (let p = 0; p < P; p += seg) {
-    g.fillStyle = pal[(((Math.floor((p - sh) / band)) % n) + n) % n];
+    const ph = (((p - sh) / period) % 1 + 1) % 1, k = 0.5 + 0.5 * Math.cos(ph * Math.PI * 2);
+    g.fillStyle = pal[Math.round(k * 31)];
     const l = Math.min(seg, P - p);
     if (p < w) g.fillRect(x + p, y, Math.min(l, w - p), 1);
     else if (p < w + h - 2) g.fillRect(x + w - 1, y + p - w + 1, 1, l);
@@ -82,8 +93,8 @@ export function cycleRect(g: CanvasRenderingContext2D, x: number, y: number, w: 
 /** Small travelling highlight around a mini-screen border (subtle; keeps health colours readable). */
 export function cometRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, col: string, ph: number) {
   const P = 2 * (w + h), p = Math.floor(((ph % 1) + 1) % 1 * P);
-  g.fillStyle = col;
-  for (let k = 0; k < 4; k++) { const q = (p + k) % P; if (q < w) g.fillRect(x + q, y, 1, 1); else if (q < w + h) g.fillRect(x + w - 1, y + q - w, 1, 1); else if (q < 2 * w + h) g.fillRect(x + w - 1 - (q - w - h), y + h - 1, 1, 1); else g.fillRect(x, y + h - 1 - (q - 2 * w - h), 1, 1); }
+  const pal = shades(col);
+  for (let k = 0; k < 6; k++) { g.fillStyle = pal[8 + k * 4]; const q = (p + k) % P; if (q < w) g.fillRect(x + q, y, 1, 1); else if (q < w + h) g.fillRect(x + w - 1, y + q - w, 1, 1); else if (q < 2 * w + h) g.fillRect(x + w - 1 - (q - w - h), y + h - 1, 1, 1); else g.fillRect(x, y + h - 1 - (q - 2 * w - h), 1, 1); }
 }
 
 // ---------- post-process ----------
@@ -115,7 +126,7 @@ function crtOverlay(w: number, h: number, rows: number) {
 /** Draw the upscaled frame to the display, with barrel curve (horizontal bands) + scanlines + vignette. */
 export function presentCRT(d: CanvasRenderingContext2D, mid: HTMLCanvasElement, vx: number, vy: number, vw: number, vh: number, rows: number) {
   d.imageSmoothingEnabled = true; d.imageSmoothingQuality = "high";
-  const N = fxCfg.low ? 1 : 48, c = 0.022, bh = mid.height / N, dh = vh / N;
+  const N = fxCfg.low ? 1 : 48, c = 0.009, bh = mid.height / N, dh = vh / N;
   for (let i = 0; i < N; i++) {
     const v = (i + 0.5) / N * 2 - 1, inset = N > 1 ? c * v * v * vw : 0, yb = vy + vh / 2 + (v * (1 - c * 0.6 * (1 - v * v))) * vh / 2 - dh / 2;
     d.drawImage(mid, 0, i * bh, mid.width, bh, vx + inset, yb, vw - inset * 2, dh + 1);

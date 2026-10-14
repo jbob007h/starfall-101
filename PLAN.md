@@ -141,10 +141,10 @@ Juice:
 - Opponent grid: big yellow/magenta X over every mini-screen YOU knocked out.
 
 ## Visual flash pass (v10)
-- CRT filter (default on, V / Select toggles, saved): 48-band barrel curve, scanlines, vignette at display resolution; field bloom = 1/4-res copy drawn additively with smoothing.
+- CRT filter (default on, V / Select toggles, saved): 48-band barrel curve (gentle, c=0.009), scanlines, vignette at display resolution; field bloom = 1/4-res copy drawn additively with smoothing.
 - Stage parallax backgrounds by players left (crossfade ~2 s): starfield/haze (101-75) -> nebula (75-50) -> nebula + far fortress ruins (50-25) -> fortress with near side walls (25-10) -> red-hot core with molten veins + embers (final 10 / duel).
-- Per-stage palette (cyan -> blue/magenta -> magenta -> red/magenta -> red/orange) used for a screen-tint that pulses on the music beat (Audio.beatPhase from the sequencer clock) and for palette-cycled borders: colour bands chase around every panel/play-area/strip frame; mini-screens get a small travelling highlight so health colours stay readable.
-- Mini-boss send cut-in: pilot portrait + boss banner slides across the field in ~0.9 s, no pause.
+- Per-stage palette (cyan -> blue/magenta -> magenta -> red/magenta -> red/orange) used for a screen-tint that pulses on the music beat (Audio.beatPhase from the sequencer clock) and for palette-cycled borders: a smooth single-hue (stage hue) bright-to-dim gradient chases around every panel/play-area/strip frame; mini-screens get a faint single-hue travelling highlight so health colours stay readable.
+- Mini-boss send cut-in: thin strip with pilot portrait + boss slides along the top edge of the field in ~0.9 s, no pause.
 - KO shockwave ripples across the opponent grid; your KOs flash gold (then keep the X).
 - Raster line-scroll wave on bombs, triple bombs and the FINAL DUEL start.
 - Victory: falling meteors assemble into a giant "1ST"; leaderboard follows after ~4.5 s.
