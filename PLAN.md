@@ -94,14 +94,15 @@ Juice:
 - Final duel takes place under a huge meteor shower made of every eliminated player.
 
 ## Adaptive music (Sega Genesis / Mega Drive style)
-- Engine (src/audio/genesis.ts): YM2612-style 4-operator FM (8 algorithms, op1 feedback, per-operator AR/D1R/SL/D2R/RR, MUL, DT), 5 FM channels + channel-6 DAC drums (procedural 8-bit ~13.3 kHz kick/snare/hats/crash/tom), SN76489-style PSG (2 square channels with stepped 2 dB envelopes + LFSR noise), stereo panning, light 8-bit quantiser + 12.5 kHz band limit for grit.
+- Engine (src/audio/genesis.ts): YM2612-style 4-operator FM (8 algorithms, op1 feedback, per-operator AR/D1R/SL/D2R/RR, MUL, DT), 5 FM channels + channel-6 DAC drums (all music percussion; procedurally synthesized kick w/ pitch-drop+click, snare body+noise, closed/open hats, crash, 2 toms, clap; compressed/saturated, sample-and-hold to ~13.3 kHz, 8-bit; mono: a new hit cuts the previous one, layered hits like kick+hat are premixed into one sample), SN76489-style PSG square channels with stepped 2 dB envelopes (no PSG noise drums), stereo panning, light 8-bit quantiser + 12.5 kHz band limit for grit.
 - Sequencer (src/audio/sequencer.ts): tracker format; 16-row bar patterns with per-channel token lines (notes, chords, holds, rests, drum letters, velocity), order lists per stage, per-channel patches (with per-stage overrides), tempo. Notes are scheduled ~150 ms ahead on the AudioContext clock; stage changes apply on the next bar line (gapless).
 - Song "Starfall Overdrive" (src/audio/songs.ts), E minor, intensifies as players drop out:
   - 101-75 LAUNCH 150 BPM: slap FM bass, DAC drums, e-piano chord hits
-  - 75-50 PURSUIT 156: 16th-note bass drive, PSG arpeggios, noise hats
+  - 75-50 PURSUIT 156: 16th-note bass drive, PSG arpeggios, DAC hats
   - 50-25 ASSAULT 164: FM saw-lead melody, harder drums
   - 25-10 OVERDRIVE 172: lead harmony, PSG echo, brass stabs, more crashes
-  - Final 10 FINAL BOSS 186: Phrygian boss riff, heavy FM bass, shredding FM lead runs, power-chord brass, 16th hats; final duel +8 BPM
+  - Final 10 FINAL BOSS 186: 16-bar melodic theme over Em-C-D-B (call/response hook x2, second answer climbs) + Am-Em-C-B / C-D-B-B bridge; harmonized lead (diatonic thirds) on bars 5-8 and 13-16; heavy FM bass locked to chord roots; simple brass stabs, calm 8th PSG arps; lead runs only as fills at phrase ends; driving DAC drums
+  - FINAL DUEL 194: same theme, harmonized throughout, 16th bass, double-kick drums, crash every 2 bars, second 8 bars modulate up a whole step
   - Heartbeat pulse on low health, locked to the beat.
 - Previews: `node music-preview.mjs` renders WAVs of every stage to music_preview/ via OfflineAudioContext.
 
