@@ -84,6 +84,12 @@ console.log("incoming boss variant spawned:", await p.evaluate(() => window.__ga
 await p.evaluate(() => { const g = window.__game; g.bombs = 5; g.chain = 8; g.chainT = 2; g.spawnFormation(6, 1, 3, false, -1); g.collect({ kind: "B", x: 0, y: 0, vx: 0, vy: 0, t: 0 }); });
 await p.waitForTimeout(150); await p.screenshot({ path: "triple_bomb.png" }); await p.waitForTimeout(600);
 console.log("triple bomb [bombs, chain>0, queue]:", await p.evaluate(() => { const g = window.__game; return [g.bombs, g.chain > 0, g.tripleQ.length]; }));
+// upgraded enemies late in the match
+await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; g.time = 330; g.enemies.length = 0; g.eb.length = 0; for (let i = 0; i < 4; i++) g.spawnFormation(6, i, i % 3, false, -1); });
+await p.waitForTimeout(2600);
+await p.screenshot({ path: "screenshot9.png" });
+console.log("upgrade tiers [t0,t1,t2] / hp:", await p.evaluate(() => { const g = window.__game, c = [0, 0, 0]; g.enemies.filter(e => !e.boss).forEach(e => c[e.up ?? 0]++); return [c, g.enemies.slice(0, 6).map(e => e.hp)]; }));
+console.log("share @60/150/240/330/420s:", await p.evaluate(() => [60, 150, 240, 330, 420].map(t => { const g = window.__game; const ot = g.time; g.time = t; let s = [0, 0, 0]; const n0 = g.enemies.length; for (let i = 0; i < 50; i++) g.spawnFormation(10, 0, 0, false, -1); const add = g.enemies.splice(n0); add.forEach(e => s[e.up]++); g.time = ot; return s.map(x => Math.round(x / 5) + "%").join("/"); })));
 const m0 = await p.evaluate(() => ({ stage: window.__audio.tier, bpm: window.__audio.tempo }));
 await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; g.rivals.forEach((r, i) => { if (i >= 6) r.alive = false; }); });
 await p.waitForTimeout(2600);

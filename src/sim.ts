@@ -53,8 +53,10 @@ export class MatchSim {
     b.hp -= dmg; b.regen = 0; this.out.hit(b.id, from);
     if (b.hp <= 0) this.eliminate(b, from);
   }
-  /** Pacing curve: nobody drops for ~55s, then the field thins to ~1 by ~12 min. */
-  private aliveTarget() { const t = this.time; if (t < 55) return 101; const p = clamp((t - 55) / 640, 0, 1); return Math.max(1, Math.round(101 * Math.pow(1 - p, 1.25))); }
+  /** Pacing curve (piecewise-linear keyframes, seconds -> players left): protected opening to 0:55,
+   *  top 20 at 4:00, top 10 at 5:00, then the final 10 linger for the boss music; duel (2) by ~6:40. */
+  static PACE: [number, number][] = [[0, 101], [55, 101], [120, 60], [180, 35], [240, 19], [300, 9], [345, 6], [400, 2], [480, 1]];
+  private aliveTarget() { const K = MatchSim.PACE, t = this.time; for (let i = 1; i < K.length; i++) if (t <= K[i][0]) { const [t0, a] = K[i - 1], [t1, b] = K[i]; return Math.round(a + (b - a) * (t - t0) / (t1 - t0)); } return 1; }
   tick(dt: number) {
     if (this.over) return;
     this.time += dt;

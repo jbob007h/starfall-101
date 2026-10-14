@@ -1,7 +1,7 @@
 import { drawText, textWidth } from "./font";
 import { Audio, renderMusicPreview } from "./audio";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport } from "./net";
-import { makeSprite, drawSprite, SHIP, SAUCER, BUG, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
+import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_UP1, BUG_UP2, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
 
 // ---------- constants ----------
 const W = 640, H = 360;
@@ -57,6 +57,16 @@ const allCols = [...COLORS, SENT_COL];
 function dark(c: string) { return c.replace(/^#(..)(..)(..)$/, (_, r, g, b) => "#" + [r, g, b].map(h => Math.floor(parseInt(h, 16) * 0.4).toString(16).padStart(2, "0")).join("")); }
 const saucerSpr = allCols.map(c => makeSprite(SAUCER, { x: c, w: WHT, d: dark(c) }));
 const bugSpr = allCols.map(c => makeSprite(BUG, { x: c, w: WHT, d: dark(c) }));
+const PLATE = "#8c90b8", allW = (rows: string[]) => makeSprite(rows, { x: WHT, w: WHT, d: WHT, a: WHT });
+/** [tier][saucer|bug][colour] sprites for normal / armored / spiked enemies, plus white hit-flash silhouettes. */
+const enemySpr = [[SAUCER, BUG], [SAUCER_UP1, BUG_UP1], [SAUCER_UP2, BUG_UP2]].map(t => t.map(rows => allCols.map(c => makeSprite(rows, { x: c, w: WHT, d: dark(c), a: PLATE }))));
+const enemyFlash = [[SAUCER, BUG], [SAUCER_UP1, BUG_UP1], [SAUCER_UP2, BUG_UP2]].map(t => t.map(allW));
+/** Upgrade odds by match time: tier 1 from 1:00 (20%) to ~85% at 4:00; tier 2 (spiked) takes over from 4:00. */
+export function upgradeTier(t: number) {
+  if (t < 60) return 0; const up = Math.min(0.85, 0.2 + (t - 60) / 180 * 0.65), t2 = t < 240 ? 0 : Math.min(0.6, (t - 240) / 150 * 0.6);
+  const r = Math.random(); return r < up * t2 ? 2 : r < up ? 1 : 0;
+}
+const UP_HP = [1, 3, 5];
 const bossSpr = makeSprite(BOSS, { x: SENT_COL, w: "#ffd0d0", k: "#400010", y: YEL });
 const badgeSpr = makeSprite(BADGE, { y: YEL, w: WHT });
 const BOSS_NAMES = ["SAUCER", "SERPENT", "FORTRESS", "PHANTOM"];
@@ -106,7 +116,7 @@ const hit = (...c: string[]) => c.some(k => pressed.has(k));
 interface Rival { id: number; name: string; isBot: boolean; alive: boolean; hp: number; badges: number; skill: number; target: number; retarget: number; sendCd: number;
   flash: number; place: number; regen: number; seed: number; col: number; koT: number; ai: number; }
 interface Enemy { x: number; y: number; t: number; delay: number; path: number; x0: number; y0: number; idx: number; hp: number; col: number; form: number;
-  fireCd: number; spr: number; entered: boolean; dead: boolean; boss?: boolean; maxhp?: number; sender?: number; vx?: number;
+  fireCd: number; spr: number; up?: number; hf?: number; entered: boolean; dead: boolean; boss?: boolean; maxhp?: number; sender?: number; vx?: number;
   bv?: number; hist?: { x: number; y: number }[]; segs?: { x: number; y: number }[]; tur?: number[]; turMax?: number; cyc?: number; vis?: number; eye?: boolean; tx?: number; ty?: number; }
 interface Formation { id: number; total: number; killed: number; lost: boolean; sent: boolean; sender: number; done: boolean; }
 interface Bullet { x: number; y: number; vx: number; vy: number; r: number; grazed?: boolean; col: string; dmg?: number; }
@@ -260,7 +270,7 @@ class Game {
       pts.push({ x: best.x, y: best.y }); this.bolts.push({ pts, life: 0.12 });
       for (let k = 0; k < 4; k++) this.parts.push({ x: best.x, y: best.y, vx: rnd(-70, 70), vy: rnd(-70, 70), life: 0.2, max: 0.2, col: Math.random() < 0.5 ? CYA : WHT, s: 1 });
       if (best.boss) { const wp = this.bossParts(best).find(p => p.weak); if (wp) this.damageBoss(best, 2, wp.tur); }
-      else { best.hp -= 2; if (best.hp <= 0) this.killEnemy(best, true); }
+      else { best.hp -= 2; if (best.hp > 0 && best.up) this.chip(best); if (best.hp <= 0) this.killEnemy(best, true); }
       from = { x: best.x, y: best.y };
     }
     audio.zap();
@@ -331,9 +341,9 @@ class Game {
     const f: Formation = { id: this.formId++, total: n, killed: 0, lost: false, sent, sender, done: false }; this.forms.push(f);
     const x0 = rnd(30, PW - 30), side = Math.random() < 0.5, spr = ri(0, 1);
     for (let i = 0; i < n; i++) {
-      const hp = sent ? 2 : (this.time > 240 && Math.random() < 0.3 ? 3 : 1);
+      const up = sent ? 0 : upgradeTier(this.time), hp = sent ? 2 : UP_HP[up];
       this.enemies.push({ x: -50, y: -50, t: 0, delay: i * (path === 3 ? 0.08 : 0.22), path, x0: path === 1 ? (side ? -12 : PW + 12) : path === 3 ? PW / 2 + (i - (n - 1) / 2) * 20 : x0, y0: rnd(40, 140),
-        idx: i, hp, col: sent ? SENT : col, form: f.id, fireCd: rnd(1, 3), spr, entered: false, dead: false, sender, vx: side ? 1 : -1 });
+        idx: i, hp, col: sent ? SENT : col, form: f.id, fireCd: rnd(1, 3), spr, up, entered: false, dead: false, sender, vx: side ? 1 : -1 });
     }
   }
   pathPos(e: Enemy, t: number) {
@@ -346,6 +356,7 @@ class Game {
     }
   }
   updateEnemies(dt: number) {
+    for (const e of this.enemies) if (e.hf) e.hf = Math.max(0, e.hf - dt);
     const bs = (55 + this.ramp * 22);
     for (const e of this.enemies) {
       if (e.dead) continue;
@@ -451,6 +462,8 @@ class Game {
   }
   collidePlayer(x: number, y: number, r: number) { const dx = x - this.px, dy = y - this.py; return dx * dx + dy * dy < (r + 1.5) * (r + 1.5); }
 
+  /** Armored enemy took a non-lethal hit: white flash + plating chips. */
+  chip(e: Enemy) { e.hf = 0.07; audio.bossHit(); for (let i = 0; i < 3; i++) this.parts.push({ x: e.x + rnd(-4, 4), y: e.y + rnd(-2, 3), vx: rnd(-50, 50), vy: rnd(-60, 10), life: 0.25, max: 0.25, col: i ? PLATE : allCols[e.col], s: 1 }); }
   killEnemy(e: Enemy, byShot: boolean) {
     if (e.dead) return; e.dead = true;
     const col = allCols[e.col];
@@ -468,11 +481,11 @@ class Game {
     const f = this.forms.find(f => f.id === e.form);
     if (byShot) {
       this.chainAdd(e.col, 0);
-      this.score += Math.round(100 * (1 + this.chain / 10));
+      this.score += Math.round(100 * (1 + (e.up ?? 0)) * (1 + this.chain / 10));
       audio.kill(this.chain);
       if (f) { f.killed++; if (f.killed >= f.total && !f.lost) this.formClear(f, e); }
     } else if (f) f.lost = true;
-    const nd = ri(1, 2); for (let i = 0; i < nd; i++) this.items.push({ x: e.x, y: e.y, vx: rnd(-20, 20), vy: rnd(-50, -10), kind: "dot", t: 0 });
+    const nd = ri(1, 2) + (e.up ?? 0); for (let i = 0; i < nd; i++) this.items.push({ x: e.x, y: e.y, vx: rnd(-20, 20), vy: rnd(-50, -10), kind: "dot", t: 0 });
     if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pickPowerup(), t: 0 });
   }
   chainAdd(col: number, extra: number) {
@@ -521,6 +534,7 @@ class Game {
         if (Math.abs(b.x - e.x) < 7 && Math.abs(b.y - e.y) < 6) {
           e.hp -= b.dmg ?? 1; b.y = -100; this.parts.push({ x: b.x, y: b.y + 100 - 100, vx: 0, vy: 0, life: 0.05, max: 0.05, col: WHT, s: 2 });
           if (e.boss) audio.bossHit();
+          if (e.hp > 0 && e.up) this.chip(e);
           if (e.hp <= 0) this.killEnemy(e, true); break;
         }
       }
@@ -861,7 +875,7 @@ class Game {
     for (const e of this.enemies) {
       if (e.dead || (!e.boss && e.t < e.delay)) continue;
       if (e.boss) { this.drawBoss(e); continue; }
-      const spr = (e.spr ? bugSpr : saucerSpr)[e.col]; const bob = Math.floor(e.t * 6) % 2;
+      const u = e.up ?? 0, spr = (e.hf ?? 0) > 0 ? enemyFlash[u][e.spr] : enemySpr[u][e.spr][e.col]; const bob = Math.floor(e.t * 6) % 2;
       ctx.drawImage(spr, Math.round(e.x - spr.width / 2), Math.round(e.y - spr.height / 2) + bob);
     }
     // player bullets

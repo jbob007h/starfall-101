@@ -11,6 +11,11 @@ export const SHIP = [
 ];
 export const SAUCER = ["...xxxxx...", "..xxxxxxx..", ".xwxxwxxwx.", "xxxxxxxxxxx", "x.dd.d.dd.x", ".xx.....xx."]; // 11x6 (~20% larger)
 export const BUG = ["x.........x", ".x..xxx..x.", "..xxxwxxx..", ".xxxwwwxxx.", "xxdxxdxxdxx", "x..x...x..x", "x.........x"]; // 11x7
+// Upgraded ("armored") variants: a = steel plating, w = white rivets/spikes; body colour stays readable for chaining.
+export const SAUCER_UP1 = ["...aaaaa...", "..axxxxxa..", ".xwxxwxxwx.", "aaxaxaxaxaa", "x.dd.d.dd.x", ".aa.....aa."];
+export const SAUCER_UP2 = ["......w......", "...waaaaaw...", "..aaxxxxxaa..", ".axwxxwxxwxa.", "waaxaxaxaxaaw", "..x.dd.dd.x..", "..ww.....ww.."];
+export const BUG_UP1 = ["a.........a", ".a..aaa..a.", "..xxxwxxx..", ".axxwwwxxa.", "xadxxdxxdax", "a..x...x..a", "a.........a"];
+export const BUG_UP2 = ["w...........w", ".a...aaa...a.", "..a.axwxa.a..", "..aaxwwwxaa..", ".waxxwwwxxaw.", ".xadxxdxxdax.", ".a..x...x..a.", "w...........w"];
 export const BOSS = [
   ".......xxxxxxx.......", ".....xxwwwwwwwxx.....", "....xxwkkwwwkkwxx....", "...xxxwkkwwwkkwxxx...",
   "..xxxxxwwwwwwwxxxxx..", ".xxyxxyxxyxxyxxyxxyx.", "xxxxxxxxxxxxxxxxxxxxx", "xx.xx.xx.xx.xx.xx.xxx",
