@@ -22,7 +22,14 @@ export type NetEvent =
   | { type: "hit"; id: number; from: number }
   | { type: "ko"; id: number; by: number; place: number; badges: number }
   | { type: "matchEnd"; winner: number }
-  | { type: "disconnected"; reason: string };
+  | { type: "disconnected"; reason: string }
+  | { type: "snap"; id: number; snap: Snap }   // live gameplay of a watched human (spectator)
+  | { type: "watch"; on: boolean };            // someone is spectating you: start/stop sending snapshots
+/** Compact gameplay snapshot (~15 Hz) relayed through the server to spectators. Ids are game-local on the client side.
+ *  p: [px, py, hp, bombs, chain, chainCol, eligible, chainT%, score, weapon, shield, focus, inv, badges, mode, freeze, zap, regen, starBoost, kos, bombFx%]
+ *  e: enemies [uid, x, y, spr, col, up, hitflash] or bosses [uid, x, y, -1-variant, hp, maxhp, sender, vis%, eye, tur0, tur1, turMax, ...segXY]
+ *  b: enemy bullets flat [x, y, vx, vy, colIdx, r]; pb: player bullets flat [x, y, vx, vy, colIdx]; it: items flat [x, y, kindIdx]; tg: target ids */
+export interface Snap { p: number[]; e: number[][]; b: number[]; pb: number[]; it: number[]; tg: number[]; }
 export interface SimHints { time: number; calm: boolean; ramp: number; localBadges: number; localArmed: boolean; localDead: boolean; duel: boolean; }
 
 export interface Transport {
@@ -37,6 +44,10 @@ export interface Transport {
   sendAttack(to: number, tier: Tier, power: number): void;
   sendState(hp: number, badges: number, targets: number[], armed: boolean): void;
   sendKO(by: number): void;
+  /** Online only: send a gameplay snapshot (only while someone watches you). */
+  sendSnap(s: Snap): void;
+  /** Online only, after you are out: watch human `id` (game-local), or -2 to stop. */
+  spectate(id: number): void;
   tick(dt: number, hints: SimHints): void;
 }
 
@@ -71,6 +82,8 @@ export class LocalSimTransport implements Transport {
   sendAttack(to: number, tier: Tier, power: number) { this.sim?.humanAttack(this.map.me, this.map.toGlobal(to), tier, power); }
   sendState(hp: number, badges: number, targets: number[], armed: boolean) { this.sim?.humanState(this.map.me, hp, badges, targets.map(t => this.map.toGlobal(t)), armed); }
   sendKO(by: number) { this.sim?.humanKO(this.map.me, this.map.toGlobal(by)); }
+  sendSnap() { /* offline: nobody to watch */ }
+  spectate() { /* offline: simulated humans have no live gameplay */ }
   tick(dt: number) {
     if (this.phase === "lobby") this.tickLobby(dt);
     else if (this.phase === "match" && this.sim) {
@@ -154,6 +167,10 @@ export class WebSocketTransport implements Transport {
       case "hit": if (m.id !== this.map.me) this.emit({ type: "hit", id: L(m.id), from: L(m.from) }); break;
       case "ko": if (m.id !== this.map.me) this.emit({ type: "ko", id: L(m.id), by: L(m.by), place: m.place, badges: m.badges }); break;
       case "matchEnd": this.emit({ type: "matchEnd", winner: L(m.winner) }); break;
+      case "watch": this.emit({ type: "watch", on: !!m.on }); break;
+      case "snap": { if (m.id === this.map.me || !Array.isArray(m.p)) break;
+        const e = (Array.isArray(m.e) ? m.e : []).map((q: number[]) => { if (q[3] < 0) { q = q.slice(); q[6] = L(q[6]); } return q; });
+        this.emit({ type: "snap", id: L(m.id), snap: { p: m.p, e, b: m.b || [], pb: m.pb || [], it: m.it || [], tg: (m.tg || []).map(L) } }); break; }
     }
   }
   joinLobby(name: string) { this.connect(); this.send({ t: "join", name }); }
@@ -165,6 +182,11 @@ export class WebSocketTransport implements Transport {
     this.send({ t: "state", hp, badges, targets: targets.map(t => this.map.toGlobal(t)), armed });
   }
   sendKO(by: number) { this.send({ t: "ko", by: this.map.toGlobal(by) }); }
+  sendSnap(s: Snap) {
+    const G = (l: number) => this.map.toGlobal(l);
+    this.send({ t: "snap", p: s.p, e: s.e.map(q => { if (q[3] < 0) { q = q.slice(); q[6] = G(q[6]); } return q; }), b: s.b, pb: s.pb, it: s.it, tg: s.tg.map(G) });
+  }
+  spectate(id: number) { this.send({ t: "spec", target: id < 0 ? -1 : this.map.toGlobal(id) }); }
   tick() { /* event-driven */ }
 }
 

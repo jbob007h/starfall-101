@@ -24,7 +24,8 @@ const server = http.createServer((req, res) => {
 });
 
 interface Client { ws: WebSocket; conn: number; name: string; match: Match | null; slot: number; ready: boolean; alive: boolean; }
-interface Match { id: number; sim: MatchSim; clients: Map<number, Client>; /* slot -> client */ stateT: number; }
+interface Match { id: number; sim: MatchSim; clients: Map<number, Client>; /* slot -> client */ stateT: number;
+  watchers: Map<Client, number>; /* spectator -> watched slot */ watched: Set<number>; /* slots told to stream snapshots */ }
 let nextConn = 1, nextMatch = 1;
 const lobby = { members: new Map<number, Client>(), firstJoin: 0, lastCd: -1 };
 const matches = new Map<number, Match>();
@@ -33,9 +34,25 @@ const send = (c: Client, o: object) => { if (c.ws.readyState === WebSocket.OPEN)
 const lobbyBroadcast = (o: object) => { for (const c of lobby.members.values()) send(c, o); };
 const clean = (s: unknown) => String(s || "PILOT").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || "PILOT";
 
+/** Spectating: eliminated humans watch a live human; that human streams compact snapshots (~15 Hz) only while watched. */
+function setWatch(m: Match, c: Client, slot: number) {
+  const t = m.clients.get(slot);
+  if (slot >= 0 && t && t.alive && t !== c && !c.alive) m.watchers.set(c, slot); else m.watchers.delete(c);
+  const now = new Set(m.watchers.values());
+  for (const s of now) if (!m.watched.has(s)) { const x = m.clients.get(s); if (x) send(x, { t: "watch", on: true }); }
+  for (const s of m.watched) if (!now.has(s)) { const x = m.clients.get(s); if (x) send(x, { t: "watch", on: false }); }
+  m.watched = now;
+}
+const nums = (v: unknown, max: number) => (Array.isArray(v) ? v.slice(0, max) : []).map(x => Math.round(Number(x) || 0));
+function relaySnap(m: Match, c: Client, d: any) {
+  if (!m.watched.has(c.slot)) return;
+  const out = JSON.stringify({ t: "snap", id: c.slot, p: nums(d.p, 24), e: (Array.isArray(d.e) ? d.e : []).slice(0, 80).map((q: unknown) => nums(q, 40)),
+    b: nums(d.b, 6 * 260), pb: nums(d.pb, 5 * 90), it: nums(d.it, 3 * 40), tg: nums(d.tg, 8) });
+  for (const [w, s] of m.watchers) if (s === c.slot && w.ws.readyState === WebSocket.OPEN) w.ws.send(out);
+}
 function leaveCurrent(c: Client) {
   if (lobby.members.delete(c.conn)) lobbyBroadcast({ t: "lobbyLeave", id: c.conn, name: c.name, count: lobby.members.size });
-  if (c.match) { const m = c.match; if (c.alive) m.sim.humanKO(c.slot, -2); m.clients.delete(c.slot); c.match = null; c.alive = false; }
+  if (c.match) { const m = c.match; if (c.alive) m.sim.humanKO(c.slot, -2); setWatch(m, c, -1); m.clients.delete(c.slot); c.match = null; c.alive = false; }
 }
 function joinLobby(c: Client, name: string) {
   leaveCurrent(c); c.name = clean(name); c.ready = false;
@@ -50,7 +67,7 @@ function startMatch() {
   const players: { name: string; isBot: boolean; ai: boolean; c?: Client }[] = humans.map(c => ({ name: c.name, isBot: false, ai: false, c }));
   const bn = botNames(MAX, humans.map(c => c.name)); let n = 0; while (players.length < MAX) players.push({ name: bn[n++], isBot: true, ai: true });
   for (let i = players.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [players[i], players[j]] = [players[j], players[i]]; }
-  const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim };
+  const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim, watchers: new Map(), watched: new Set() };
   const toAll = (o: object) => { for (const c of m.clients.values()) send(c, o); };
   m.sim = new MatchSim(players, {
     attack: (from, to, tier, power, variant) => { const c = m.clients.get(to); if (c) send(c, { t: "attack", from, to, tier, power, variant }); },
@@ -64,13 +81,15 @@ function startMatch() {
   console.log(`match ${m.id} started: ${humans.length} humans + ${MAX - humans.length} bots`);
 }
 
-const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 16 * 1024 });
+const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 64 * 1024 });
 wss.on("connection", ws => {
   const c: Client = { ws, conn: nextConn++, name: "PILOT", match: null, slot: -1, ready: false, alive: false };
   send(c, { t: "welcome", conn: c.conn });
   ws.on("message", raw => {
     let m: any; try { m = JSON.parse(String(raw)); } catch { return; }
     switch (m.t) {
+      case "snap": if (c.match && c.alive) relaySnap(c.match, c, m); break;
+      case "spec": if (c.match && !c.alive) setWatch(c.match, c, m.target | 0); break;
       case "join": joinLobby(c, m.name); break;
       case "leave": leaveCurrent(c); break;
       case "start": if (lobby.members.has(c.conn)) { c.ready = true; } break;

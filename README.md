@@ -12,17 +12,24 @@ URL params: `?name=ACE` (pilot name), `?server=wss://host/ws` (use a specific se
 Display fills the window at any browser zoom/DPR (crisp pixels, letterboxed). `node scale-test.mjs` checks fill at DPR 1-2.
 
 Tests: `node test.mjs` (single player + stubbed gamepad, needs `npm run serve` on :8080);
-`PORT=8090 npm start` then `node mp-test.mjs` (3 headless clients online).
+`PORT=8090 npm start` then `node mp-test.mjs` (3 headless clients online, incl. spectating); `node controls-test.mjs` (CONTROLS screen / rebinding, needs `npm run serve`).
+Single-file offline build: `npm run build:single` -> `/workspace/STARFALL101.html` (index.html with dist/main.js inlined).
 
 ## Controls
+Defaults (all rebindable on the **CONTROLS** screen: title menu / `C` / controller `Y`, also from the lobby):
 | | Keyboard | Controller (standard / Xbox) |
 |---|---|---|
-| Move | Arrows / WASD | Left stick (analog, deadzone) / D-pad |
+| Move | Arrows / WASD | Left stick (analog) / D-pad |
 | Fire (hold) | Z / Space | A |
 | Focus (hold) | Shift | X |
-| Bomb | X | B |
-| Targeting | 1 Random, 2 KOs, 3 Attackers, 4 Badges | Right-stick flick: up / right / down / left |
-| Start / vote start in lobby / pause / restart | Enter, P, R | Start |
+| Bomb | X | Right Trigger (B no longer bombs) |
+| Targeting | 1 Random, 2 KOs, 3 Attackers, 4 Badges | Right stick: up / right / down / left |
+| Pause / Mute / CRT / Low-FX | P (Esc fixed), M, V, G | Start (fixed), -, Back, - |
+| Start / vote start in lobby / restart | Enter (fixed), R | Start |
+CONTROLS screen: separate KEYBOARD / CONTROLLER tabs (Tab or LB/RB), two binds per action, Enter/A = press-to-bind (Esc/Start cancels, 8 s timeout), Del/X clears, a key already used by another action swaps (that action gets the old key), Enter/Esc/Start are reserved, "Reset to defaults" per device. Saved in localStorage (`sf101binds`), applied immediately (src/input.ts). HUD/title hints show the current binds.
+
+## Spectating (online)
+When you are knocked out and other humans are still flying, you watch their live game: the server tells a watched player to stream compact snapshots (`snap`: ship, HP, bombs, chain, score, enemies with ids, bullets with velocities, items, targets) at ~15 Hz and relays them only to that player's spectators; the spectator renders them ~110 ms behind, interpolating the ship/enemies and extrapolating bullets. Left/Right (or bound move keys), LB/RB or D-pad switch pilots, L / Y toggles the leaderboard, Enter / Start starts a new match. When the watched pilot is out it switches to the next human; with no humans left the leaderboard is shown. Offline is unchanged.
 Dots: +10 points and faster health regen (no bombs). Start with 3 bombs. Power-up drop weights (6% per kill): W 28%, B 18%, S 18%, F 18%, L 18%. Power-ups: W weapon, B bomb (max 5; picking one up at 5 = free TRIPLE BOMB that keeps your chain), F chain freeze, S shield, L lightning (5s auto chain-lightning).
 Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHANTOM (hit when the eye opens); the design id travels with the attack (`variant`) online.
 Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 40 (mini-boss); bullet wave tier starts at chain 15.

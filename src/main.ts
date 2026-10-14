@@ -2,7 +2,8 @@ import { drawText, textWidth } from "./font";
 import { Audio, renderMusicPreview } from "./audio";
 import { DUEL_HP } from "./sim";
 import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
-import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport } from "./net";
+import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport, Snap } from "./net";
+import { ACTIONS, Act, Dev, binds, bind, clearBind, resetBinds, codeName, actName, actDown, actHit, actVal, keys, pressed, typed, pad, pollPadState, RESERVED } from "./input";
 import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_UP1, BUG_UP2, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
 
 // ---------- constants ----------
@@ -92,43 +93,35 @@ const phantomSpr = drawSprite(21, 21, g => {
   g.fillStyle = WHT; g.fillRect(10, 0, 1, 3); g.fillRect(10, 18, 1, 3); g.fillRect(0, 10, 3, 1); g.fillRect(18, 10, 3, 1);
 });
 
-// ---------- input ----------
-const keys = new Set<string>(); const pressed = new Set<string>();
-const typed: string[] = []; // every keydown in order (name entry must not drop fast keystrokes)
-addEventListener("keydown", e => { typed.push(e.code); if (typed.length > 32) typed.shift(); if (!keys.has(e.code)) pressed.add(e.code); keys.add(e.code); if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault(); audio.init(); });
+// ---------- input (rebindable, see src/input.ts) ----------
+addEventListener("keydown", e => { typed.push(e.code); if (typed.length > 32) typed.shift(); if (!keys.has(e.code)) pressed.add(e.code); keys.add(e.code);
+  if (e.code.startsWith("Arrow") || e.code === "Space" || e.code === "Tab") e.preventDefault(); audio.init(); });
 addEventListener("keyup", e => keys.delete(e.code));
 addEventListener("blur", () => keys.clear());
 // ---------- gamepad (standard mapping, Xbox labels) ----------
-const pad = { ax: 0, ay: 0, held: new Set<string>(), prev: [] as boolean[], flick: false, connected: false };
 let onPad: (c: boolean) => void = () => {};
 addEventListener("gamepadconnected", () => audio.init());
+/** Fixed menu aliases (not rebindable): A confirm, B back, Y controls, LB/RB tabs / spectate switch, Start, D-pad + left stick navigation. */
+const MENU: [string, string][] = [["B0", "PadA"], ["B1", "PadB"], ["B2", "PadX"], ["B3", "PadY"], ["B4", "PadLB"], ["B5", "PadRB"], ["B9", "PadStart"], ["B8", "PadSelect"],
+  ["B12", "PadUp"], ["B13", "PadDown"], ["B14", "PadLeft"], ["B15", "PadRight"], ["A1-", "PadUp"], ["A1+", "PadDown"], ["A0-", "PadLeft"], ["A0+", "PadRight"]];
 function pollPad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
   let gp: Gamepad | null = null; for (const p of pads) if (p && p.connected) { gp = p; break; }
-  pad.held.clear(); pad.ax = pad.ay = 0;
+  pollPadState(gp);
   if (!gp) { if (pad.connected) { pad.connected = false; onPad(false); } return; }
   if (!pad.connected) { pad.connected = true; onPad(true); }
-  const b = (i: number) => { const x = gp!.buttons[i]; return !!x && (x.pressed || x.value > 0.5); };
-  let x = gp.axes[0] || 0, y = gp.axes[1] || 0; const m = Math.hypot(x, y), DZ = 0.22;
-  if (m < DZ) x = y = 0; else { const k = Math.min(1, (m - DZ) / (1 - DZ)) / m; x *= k; y *= k; }
-  if (b(14)) x = -1; if (b(15)) x = 1; if (b(12)) y = -1; if (b(13)) y = 1;
-  pad.ax = x; pad.ay = y;
-  if (b(0)) pad.held.add("PadFire"); if (b(2)) pad.held.add("PadFocus");
-  for (const [i, code] of [[1, "PadBomb"], [9, "PadStart"], [0, "PadA"], [12, "PadUp"], [13, "PadDown"], [14, "PadLeft"], [15, "PadRight"], [8, "PadSelect"]] as [number, string][]) if (b(i) && !pad.prev[i]) pressed.add(code);
-  for (let i = 0; i < 17; i++) pad.prev[i] = b(i);
-  const rx = gp.axes[2] || 0, ry = gp.axes[3] || 0, rm = Math.hypot(rx, ry); // right-stick flick = targeting
-  if (rm > 0.7 && !pad.flick) { pad.flick = true; pressed.add(Math.abs(rx) > Math.abs(ry) ? (rx > 0 ? "Digit2" : "Digit4") : (ry < 0 ? "Digit1" : "Digit3")); }
-  else if (rm < 0.4) pad.flick = false;
+  for (const [c, m] of MENU) if (pressed.has(c)) pressed.add(m);
 }
 const down = (...c: string[]) => c.some(k => keys.has(k) || pad.held.has(k));
 const hit = (...c: string[]) => c.some(k => pressed.has(k));
+const kn = (a: Act) => actName("key", a), pn = (a: Act) => actName("pad", a);
 
 // ---------- types ----------
 interface Rival { id: number; name: string; isBot: boolean; alive: boolean; hp: number; badges: number; skill: number; target: number; retarget: number; sendCd: number;
   flash: number; place: number; regen: number; seed: number; col: number; koT: number; ai: number; koBy: number; }
 interface Enemy { x: number; y: number; t: number; delay: number; path: number; x0: number; y0: number; idx: number; hp: number; col: number; form: number;
   fireCd: number; spr: number; up?: number; hf?: number; entered: boolean; dead: boolean; boss?: boolean; maxhp?: number; sender?: number; vx?: number;
-  bv?: number; hist?: { x: number; y: number }[]; segs?: { x: number; y: number }[]; tur?: number[]; turMax?: number; cyc?: number; vis?: number; eye?: boolean; tx?: number; ty?: number; }
+  uid?: number; bv?: number; hist?: { x: number; y: number }[]; segs?: { x: number; y: number }[]; tur?: number[]; turMax?: number; cyc?: number; vis?: number; eye?: boolean; tx?: number; ty?: number; }
 interface Formation { id: number; total: number; killed: number; lost: boolean; sent: boolean; sender: number; done: boolean; }
 interface Bullet { x: number; y: number; vx: number; vy: number; r: number; grazed?: boolean; col: string; dmg?: number; }
 interface Item { x: number; y: number; vx: number; vy: number; kind: string; t: number; }
@@ -138,7 +131,8 @@ interface Popup { text: string; x: number; y: number; t: number; col: string; sc
 interface Warn { variant?: number; t: number; tier: number; power: number; sender: number; x: number; }
 interface Wave { t: number; dur: number; power: number; acc: number; pat: number; }
 
-type State = "title" | "name" | "lobby" | "play" | "over" | "win";
+type State = "title" | "name" | "lobby" | "play" | "over" | "win" | "controls";
+const SNAP_COLS = [SENT_COL, MAG, YEL, CYA, WHT, "#60ff80"], SNAP_ITEMS = ["dot", "W", "B", "S", "F", "L", "badge", "star"];
 
 class Game {
   state: State = "title"; time = 0; realT = 0;
@@ -159,7 +153,7 @@ class Game {
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
       this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
-    this.state = "play"; audio.init(); audio.setTier(0); audio.startMusic();
+    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.setTier(0); audio.startMusic();
     this.popup("STAGE START!", PW / 2, PH / 2 - 20, YEL, 3);
   }
   // ---------- network / lobby ----------
@@ -184,7 +178,7 @@ class Game {
       if (ch && this.namePos < 10) { b[this.namePos++] = ch; beep(880); }
       if (c === "Backspace" && this.namePos > 0) { b.splice(--this.namePos, 1); beep(330); }
     }
-    if (hit("PadBomb") && this.namePos > 0) { b.splice(--this.namePos, 1); beep(330); }
+    if (hit("PadB") && this.namePos > 0) { b.splice(--this.namePos, 1); beep(330); }
     if (hit("ArrowLeft", "PadLeft")) this.namePos = Math.max(0, this.namePos - 1);
     if (hit("ArrowRight", "PadRight", "PadA") && this.namePos < b.length && this.namePos < 9) { this.namePos++; beep(660); }
     const cyc = (hit("ArrowUp", "PadUp") ? 1 : 0) - (hit("ArrowDown", "PadDown") ? 1 : 0);
@@ -230,8 +224,10 @@ class Game {
     const sbH = LB_ROWS * 10, th = Math.max(8, sbH * LB_ROWS / 101); ctx.fillStyle = DIM; ctx.fillRect(x + w - 5, top + 10, 2, sbH);
     ctx.fillStyle = CYA; ctx.fillRect(x + w - 5, top + 10 + Math.round((sbH - th) * this.lbScroll / (101 - LB_ROWS)), 2, th);
     drawText(ctx, (pad.connected ? "STICK" : "UP/DOWN") + " SCROLL   " + (pad.connected ? "START" : "ENTER") + ": PLAY AGAIN", x + w / 2, y + h - 11, CYA, 1, "center");
+    if (this.spec >= 0) drawText(ctx, (pad.connected ? "Y" : "L") + ": BACK TO SPECTATING " + (this.rivals[this.spec]?.name ?? ""), x + w / 2, y + h - 21, YEL, 1, "center");
+    else if (this.state === "over" && this.net.online && !this.specIds().length && this.rivals.some(r => !r.isBot)) drawText(ctx, "NO HUMAN PILOTS LEFT TO SPECTATE", x + w / 2, y + h - 21, "#8070b0", 1, "center");
   }
-  startLobby() { this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.net.joinLobby(this.name); }
+  startLobby() { this.spec = -1; this.specSnaps = []; this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.net.joinLobby(this.name); }
   onNet(e: NetEvent) {
     switch (e.type) {
       case "lobbyJoin": this.lobbyCount = e.count; if (!e.player.isBot) { this.lobbyHumans++; this.lobbyLog.push((e.player.id === this.net.localId ? e.player.name + " (YOU)" : e.player.name) + " JOINED"); } break;
@@ -242,20 +238,24 @@ class Game {
       case "hit": { const r = this.rivals[e.id]; if (r) { r.flash = 0.4; } break; }
       case "ko": { const r = this.rivals[e.id]; if (!r || !r.alive) break; const by = e.by === this.net.localId ? -1 : e.by;
         if (this.state === "play" && !this.dead) this.koRival(r, by, e.place, e.badges);
-        else { r.alive = false; r.hp = 0; r.place = e.place; r.koBy = by; r.koT = 1; r.badges = e.badges; } break; } // keep the leaderboard filling after you are out
+        else { r.alive = false; r.hp = 0; r.place = e.place; r.koBy = by; r.koT = 1; r.badges = e.badges; }
+        if (e.id === this.spec) { const n = this.specIds(); this.spec = -1; this.startSpectate(); this.specMsg = r.name + " IS OUT" + (this.spec >= 0 ? " - NOW WATCHING " + this.rivals[this.spec].name : ""); this.specMsgT = 2.5; void n; }
+        break; } // keep the leaderboard filling after you are out
       case "attack": {
         if (e.to !== this.net.localId || this.dead || this.state !== "play") break;
         const cp = this.cellPos(e.from); this.lastAttacker = e.from; this.attackLog.push({ from: this.rivals[e.from]?.name || "?", tier: e.tier, t: this.time });
         this.projs.push({ sx: cp.x + CELL_W / 2, sy: cp.y + CELL_H / 2, ex: PX + PW / 2 + rnd(-60, 60), ey: PY + 10, t: 0, dur: 0.8, out: false, tier: e.tier, power: e.power, variant: e.variant, target: -1, sender: e.from, col: SENT_COL }); break;
       }
-      case "matchEnd": if (e.winner === this.net.localId && !this.dead && this.state === "play") { for (const r of this.rivals) r.alive = false; } break; // win resolves in updateRivals
+      case "snap": if (e.id === this.spec) this.addSnap(e.snap); break;
+      case "watch": this.watched = e.on; this.snapT = 0; break;
+      case "matchEnd": this.stopSpectate(); if (e.winner === this.net.localId && !this.dead && this.state === "play") { for (const r of this.rivals) r.alive = false; } break; // win resolves in updateRivals
       case "disconnected":
-        this.netMsg = "OFFLINE: " + e.reason; const was = this.state; this.setNet(new LocalSimTransport());
+        this.spec = -1; this.specSnaps = []; this.watched = false; this.netMsg = "OFFLINE: " + e.reason; const was = this.state; this.setNet(new LocalSimTransport());
         if (was === "lobby") this.startLobby(); else if (was === "play" && !this.dead) { this.gameOver(); } break;
     }
   }
   get aliveAI() { let n = 0; for (const r of this.rivals) if (r.alive) n++; return n; }
-  get remaining() { return this.aliveAI + (this.dead ? 0 : 1); }
+  get remaining() { return this.aliveAI + (this.dead || this.viewing ? 0 : 1); }
   get calm() { return this.time < 90; }
   get ramp() { return (1 + (100 - this.aliveAI) / 100 * 1.3) * (this.calm ? 0.65 : 1) * (this.duel ? 1.15 : 1); }
 
@@ -284,17 +284,29 @@ class Game {
   // ---------- main update ----------
   update(dt: number) {
     this.realT += dt; this.titleT += dt; this.padMsgT -= dt;
-    if (this.state !== "name") {
-      if (hit("KeyV", "PadSelect")) { fxCfg.crt = !fxCfg.crt; saveFx(); this.padMsg = "CRT FILTER " + (fxCfg.crt ? "ON" : "OFF"); this.padMsgT = 1.5; }
-      if (hit("KeyG")) { fxCfg.low = !fxCfg.low; saveFx(); this.padMsg = "LOW FX " + (fxCfg.low ? "ON" : "OFF"); this.padMsgT = 1.5; }
+    if (this.state !== "name" && this.state !== "controls") {
+      if (actHit("crt")) { fxCfg.crt = !fxCfg.crt; saveFx(); this.padMsg = "CRT FILTER " + (fxCfg.crt ? "ON" : "OFF"); this.padMsgT = 1.5; }
+      if (actHit("lowfx")) { fxCfg.low = !fxCfg.low; saveFx(); this.padMsg = "LOW FX " + (fxCfg.low ? "ON" : "OFF"); this.padMsgT = 1.5; }
     }
     if (this.state !== "play") {
       this.updateFx(dt);
-      if (this.state === "lobby") { this.net.tick(dt, this.hints()); if (this.lobbyCd > 0) this.lobbyCd -= dt; if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } }
-      if (this.state === "title" && hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) this.openName();
+      if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
+      if (this.state === "lobby") { this.tickLobby(dt); if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
+      if (this.state === "title") {
+        if (hit("ArrowUp", "ArrowDown", "KeyW", "KeyS", "PadUp", "PadDown")) { this.titleSel ^= 1; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("KeyC", "PadY")) this.openControls();
+        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel) this.openControls(); else this.openName(); }
+      }
       else if (this.state === "name") this.updateName();
       else if (this.state === "over" || this.state === "win") {
-        this.updateRivals(dt);
+        this.updateRivals(dt); this.updateSpecParts(dt);
+        if (this.spec >= 0 && hit("KeyL", "Tab", "PadY")) { this.specLb = !this.specLb; }
+        if (this.specOn()) { // spectating: switch between live humans
+          const d = (hit("ArrowRight", "PadRB", "PadRight") || actHit("right") ? 1 : 0) - (hit("ArrowLeft", "PadLB", "PadLeft") || actHit("left") ? 1 : 0);
+          if (d) this.cycleSpec(d);
+          if (this.realT - this.endT > 0.6 && hit("Enter", "KeyR", "PadStart")) this.startLobby();
+          return;
+        }
         const d = (down("ArrowDown", "KeyS") || pad.ay > 0.5 ? 1 : 0) - (down("ArrowUp", "KeyW") || pad.ay < -0.5 ? 1 : 0);
         if (hit("PageDown")) this.lbScroll += 20; if (hit("PageUp")) this.lbScroll -= 20;
         if (d) { this.lbRep -= dt; if (this.lbRep <= 0) { this.lbScroll += d; this.lbRep = this.lbRep < -1 ? 0.06 : 0.12; } } else this.lbRep = 0;
@@ -303,10 +315,10 @@ class Game {
       }
       return;
     }
-    if (hit("KeyP", "Escape", "PadStart")) this.paused = !this.paused;
-    if (hit("KeyM")) audio.toggleMute();
+    if (hit("Escape", "PadStart") || actHit("pause")) this.paused = !this.paused;
+    if (actHit("mute")) audio.toggleMute();
     if (this.paused) return;
-    for (let k = 0; k < 4; k++) if (hit("Digit" + (k + 1), "Numpad" + (k + 1))) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
+    for (let k = 0; k < 4; k++) if (actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
     if (this.hitstop > 0) { this.hitstop--; return; }
     if (this.slow > 0) { this.slow -= dt; dt *= 0.35; }
     this.time += dt;
@@ -317,14 +329,12 @@ class Game {
   }
 
   updatePlayer(dt: number) {
-    this.focus = down("ShiftLeft", "ShiftRight", "PadFocus");
-    const sp = this.focus ? 70 : 160; let dx = 0, dy = 0;
-    if (down("ArrowLeft", "KeyA")) dx--; if (down("ArrowRight", "KeyD")) dx++; if (down("ArrowUp", "KeyW")) dy--; if (down("ArrowDown", "KeyS")) dy++;
-    if (dx && dy) { dx *= 0.707; dy *= 0.707; }
-    if (pad.ax || pad.ay) { dx = pad.ax; dy = pad.ay; } // analog
+    this.focus = actDown("focus");
+    const sp = this.focus ? 70 : 160; let dx = actVal("right") - actVal("left"), dy = actVal("down") - actVal("up"); // keys = 1, sticks analog
+    const mag = Math.hypot(dx, dy); if (mag > 1) { dx /= mag; dy /= mag; }
     this.px = clamp(this.px + dx * sp * dt, 6, PW - 6); this.py = clamp(this.py + dy * sp * dt, 10, PH - 8);
     this.inv -= dt; this.fireCd -= dt;
-    if (this.fireCd <= 0 && down("KeyZ", "Space", "PadFire")) { // hold to fire
+    if (this.fireCd <= 0 && actDown("fire")) { // hold to fire
       this.fireCd = 0.075; const w = this.weapon;
       if (this.focus) { const n = 2 + w; for (let i = 0; i < n; i++) this.pb.push({ x: this.px + (i - (n - 1) / 2) * 3, y: this.py - 8, vx: 0, vy: -480, r: 2, col: YEL, dmg: 1.3 }); }
       else {
@@ -333,7 +343,7 @@ class Game {
       }
       audio.shoot();
     }
-    if (hit("KeyX", "PadBomb")) this.bomb();
+    if (actHit("bomb")) this.bomb();
     this.updateLightning(dt); this.updateTriple(dt);
     if (this.hp < 3) { this.regen -= dt; if (this.regen <= 0) { this.hp++; this.regen = 20; this.popup("+1 HP", this.px, this.py - 16, CYA, 1); audio.power(); } } else this.regen = 20;
     // engine particles
@@ -606,6 +616,7 @@ class Game {
   clearNear(r: number) { this.eb = this.eb.filter(b => { const d = Math.hypot(b.x - this.px, b.y - this.py) > r; if (!d) this.burst(b.x, b.y, b.col, 1, 30); return d; }); }
   gameOver() {
     this.dead = true; this.place = this.aliveAI + 1; this.myKoBy = this.lastAttacker; this.lbScroll = Math.max(0, this.place - 13); this.net.sendKO(this.lastAttacker); this.state = "over"; this.endT = this.realT; audio.stopMusic(); audio.explodeBig();
+    this.spec = -1; this.specLb = false; this.watched = false; this.startSpectate(this.lastAttacker);
     this.burst(this.px, this.py, YEL, 80, 200); this.burst(this.px, this.py, CYA, 60, 150); this.shake = 14;
   }
 
@@ -705,6 +716,7 @@ class Game {
     for (const r of this.rivals) { if (!r.alive) { r.koT += dt; continue; } r.flash -= dt; r.ai += dt; }
     if (this.state === "play" && !this.dead) {
       if (this.time % 0.25 < dt) this.net.sendState(this.hp, this.badges, this.targets, this.eligible);
+      if (this.watched) { this.snapT -= dt; if (this.snapT <= 0) { this.snapT = Math.max(0, this.snapT + 1 / 15); this.net.sendSnap(this.buildSnap()); } } // someone spectates us
     }
     if (!this.duel && this.aliveAI === 1 && !this.dead) { this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.warpT = 1.4; this.flash = 0.4; this.flashCol = YEL; }
     if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.buildWinStars(); this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.stopMusic(); audio.cashIn(2); }
@@ -765,6 +777,166 @@ class Game {
     this.streaks = this.streaks.filter(s => s.life > 0 && s.y < PH + 20);
   }
 
+  // ---------- lobby tick (also runs behind the CONTROLS screen) ----------
+  tickLobby(dt: number) { this.net.tick(dt, this.hints()); if (this.lobbyCd > 0) this.lobbyCd -= dt; }
+  titleSel = 0;
+
+  // ---------- spectator mode (online): watch live humans after you are out ----------
+  spec = -1; specLb = false; specSnaps: { t: number; s: Snap }[] = []; specParts: Part[] = []; specCount = 0; specMsg = ""; specMsgT = 0;
+  watched = false; snapT = 0; uidN = 0; viewing = false;
+  specIds() { return this.rivals.filter(r => r.alive && !r.isBot).map(r => r.id); }
+  specOn() { return this.state === "over" && this.spec >= 0 && !this.specLb; }
+  startSpectate(prefer = -2) {
+    if (!this.net.online || this.state !== "over") return;
+    const ids = this.specIds(); if (!ids.length) { this.stopSpectate(); return; }
+    this.setSpec(ids.includes(prefer) ? prefer : ids[0]);
+  }
+  setSpec(id: number) { if (id === this.spec) return; this.spec = id; this.specSnaps = []; this.specParts = []; this.net.spectate(id); }
+  stopSpectate() { if (this.spec >= 0) this.net.spectate(-2); this.spec = -1; this.specSnaps = []; this.specLb = false; }
+  cycleSpec(d: number) {
+    const ids = this.specIds(); if (!ids.length) return;
+    const i = ids.indexOf(this.spec); this.setSpec(ids[i < 0 ? 0 : (i + d + ids.length) % ids.length]); audio.tone(660, 0.04, "square", 0.05);
+  }
+  /** Compact snapshot of our live gameplay for spectators (ints only; see Snap in net.ts). */
+  buildSnap(): Snap {
+    const R = Math.round, ci = (c: string) => Math.max(0, SNAP_COLS.indexOf(c));
+    const p = [R(this.px), R(this.py), this.hp, this.bombs, this.chain, this.chainCol, this.eligible ? 1 : 0, R(clamp(this.chainT / this.chainMax, 0, 1) * 100), this.score, this.weapon,
+      this.shield ? 1 : 0, this.focus ? 1 : 0, this.inv > 0 ? 1 : 0, this.badges, this.mode, this.freeze > 0 ? 1 : 0, this.zapT > 0 ? 1 : 0, R(this.regen), this.starBoost, this.kos, R(this.bombFx * 100)];
+    const e: number[][] = [];
+    for (const q of this.enemies) {
+      if (q.dead || (!q.boss && q.t < q.delay)) continue; if (!q.uid) q.uid = ++this.uidN;
+      if (q.boss) { const v = [q.uid, R(q.x), R(q.y), -1 - (q.bv ?? 0), R(q.hp), R(q.maxhp ?? 1), q.sender ?? -2, R((q.vis ?? 1) * 100), q.eye ? 1 : 0, R(q.tur?.[0] ?? 0), R(q.tur?.[1] ?? 0), R(q.turMax ?? 1)];
+        for (const g of q.segs ?? []) v.push(R(g.x), R(g.y)); e.push(v); }
+      else e.push([q.uid, R(q.x), R(q.y), q.spr, q.col, q.up ?? 0, (q.hf ?? 0) > 0 ? 1 : 0]);
+      if (e.length >= 80) break;
+    }
+    const b: number[] = []; for (const q of this.eb.slice(0, 260)) b.push(R(q.x), R(q.y), R(q.vx), R(q.vy), ci(q.col), R(q.r));
+    const pb: number[] = []; for (const q of this.pb.slice(-90)) pb.push(R(q.x), R(q.y), R(q.vx), R(q.vy), ci(q.col));
+    const it: number[] = []; for (const q of this.items.slice(0, 40)) it.push(R(q.x), R(q.y), Math.max(0, SNAP_ITEMS.indexOf(q.kind)));
+    return { p, e, b, pb, it, tg: this.targets.slice(0, 8) };
+  }
+  addSnap(s: Snap) {
+    const prev = this.specSnaps[this.specSnaps.length - 1]; this.specCount++;
+    if (prev) { const now = new Set(s.e.map(q => q[0])); // enemies that vanished explode on the spectator's screen
+      for (const q of prev.s.e) if (!now.has(q[0]) && q[1] > 0 && q[1] < PW && q[2] > 0 && q[2] < PH - 10) this.specBurst(q[1], q[2], q[3] < 0 ? SENT_COL : allCols[q[4]] ?? WHT, q[3] < 0 ? 60 : 12); }
+    this.specSnaps.push({ t: performance.now(), s }); if (this.specSnaps.length > 6) this.specSnaps.shift();
+  }
+  specBurst(x: number, y: number, col: string, n: number) { for (let i = 0; i < n; i++) { const a = Math.random() * 6.283, v = rnd(20, 90); this.specParts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(0.2, 0.6), max: 0.6, col: i % 4 ? col : WHT, s: Math.random() < 0.3 ? 2 : 1 }); } }
+  updateSpecParts(dt: number) {
+    this.specMsgT -= dt;
+    for (const p of this.specParts) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; } this.specParts = this.specParts.filter(p => p.life > 0);
+    if (this.specOn() && Math.random() < 0.7) { const v = this.specView(); if (v) this.specParts.push({ x: v.px + rnd(-1, 1), y: v.py + 7, vx: rnd(-10, 10), vy: rnd(60, 120), life: 0.2, max: 0.2, col: Math.random() < 0.5 ? CYA : WHT, s: 1 }); }
+  }
+  /** Interpolated view of the watched player (~110 ms behind): ship/enemies lerp between snapshots, bullets extrapolate by velocity. */
+  specView(): Record<string, any> | null {
+    const S = this.specSnaps; if (!S.length) return null;
+    const now = performance.now() - 110;
+    let i = S.length - 1; while (i > 0 && S[i].t > now) i--;
+    const A = S[i], B = S[Math.min(i + 1, S.length - 1)], k = B === A ? 0 : clamp((now - A.t) / (B.t - A.t), 0, 1), dA = clamp((now - A.t) / 1000, 0, 0.2);
+    const L = (a: number, b: number) => a + (b - a) * k, P = A.s.p, Q = B.s.p;
+    const nb = new Map(B.s.e.map(q => [q[0], q]));
+    const enemies = A.s.e.map(q => { const r = nb.get(q[0]) ?? q, x = L(q[1], r[1]), y = L(q[2], r[2]);
+      const base = { x, y, t: this.realT + q[0] * 0.37, delay: 0, path: 0, x0: 0, y0: 0, idx: 0, form: -1, fireCd: 0, entered: true, dead: false };
+      if (q[3] >= 0) return { ...base, hp: 1, col: q[4], spr: q[3], up: q[5], hf: q[6] ? 0.05 : 0 } as Enemy;
+      const segs: { x: number; y: number }[] = []; for (let j = 12; j + 1 < q.length; j += 2) segs.push({ x: q[j], y: q[j + 1] });
+      return { ...base, boss: true, bv: -1 - q[3], hp: q[4], maxhp: q[5], sender: q[6], vis: q[7] / 100, eye: !!q[8], tur: [q[9], q[10]], turMax: q[11], segs, col: SENT, spr: 0 } as Enemy;
+    });
+    const eb: Bullet[] = []; for (let j = 0; j + 5 < A.s.b.length + 1; j += 6) { const b = A.s.b; eb.push({ x: b[j] + b[j + 2] * dA, y: b[j + 1] + b[j + 3] * dA, vx: 0, vy: 0, r: b[j + 5], col: SNAP_COLS[b[j + 4]] ?? MAG }); }
+    const pb: Bullet[] = []; for (let j = 0; j + 4 < A.s.pb.length + 1; j += 5) { const b = A.s.pb; pb.push({ x: b[j] + b[j + 2] * dA, y: b[j + 1] + b[j + 3] * dA, vx: 0, vy: 0, r: 2, col: SNAP_COLS[b[j + 4]] ?? MAG }); }
+    const items: Item[] = []; for (let j = 0; j + 2 < B.s.it.length; j += 3) items.push({ x: B.s.it[j], y: B.s.it[j + 1], vx: 0, vy: 0, kind: SNAP_ITEMS[B.s.it[j + 2]] ?? "dot", t: this.realT });
+    return { viewing: true, dead: false, px: L(P[0], Q[0]), py: L(P[1], Q[1]), hp: Q[2], bombs: Q[3], chain: Q[4], chainCol: Q[5], eligible: !!Q[6], chainT: Q[7] / 100 * this.chainMax, score: Q[8],
+      weapon: Q[9], shield: !!Q[10], focus: !!Q[11], inv: Q[12] ? 0.5 : 0, badges: Q[13], mode: Q[14], freeze: Q[15] ? 1 : 0, zapT: Q[16] ? 1 : 0, regen: Q[17], starBoost: Q[18], kos: Q[19], bombFx: (Q[20] || 0) / 100,
+      enemies, eb, pb, items, targets: B.s.tg.filter(t => t >= 0 && t < 100), parts: this.specParts, popups: [], bolts: [], warns: [], waves: [], tripleQ: [], bombAt: null, bombCol: MAG, chainPulse: 0, cutIn: null, flash: 0 };
+  }
+  renderSpecBanner() {
+    const r = this.rivals[this.spec]; if (!r) return;
+    const ids = this.specIds(), n = ids.length, i = ids.indexOf(this.spec) + 1, x = PX + 4, w = PW - 8, h = 30, y = PY + 18;
+    // highlight the watched pilot's grid cell
+    const cp = this.cellPos(r.id), bl = Math.floor(this.realT * 4) % 2; ctx.lineWidth = 2; ctx.strokeStyle = bl ? CYA : WHT; ctx.strokeRect(cp.x - 1, cp.y - 1, CELL_W + 2, CELL_H + 2); ctx.lineWidth = 1;
+    ctx.fillStyle = "rgba(6,2,14,0.86)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, CYA);
+    if (Math.floor(this.realT * 2) % 2) { ctx.fillStyle = SENT_COL; ctx.fillRect(x + 4, y + 4, 4, 4); }
+    drawText(ctx, "LIVE", x + 11, y + 4, SENT_COL, 1);
+    drawText(ctx, "SPECTATING " + r.name, x + w / 2, y + 3, YEL, 2, "center", "#000");
+    if (n > 1) drawText(ctx, i + "/" + n, x + w - 5, y + 4, CYA, 1, "right");
+    const hint = pad.connected ? "< LB / RB > SWITCH PILOT   Y LEADERBOARD   START NEW MATCH" : "< LEFT / RIGHT > SWITCH PILOT   L LEADERBOARD   ENTER NEW MATCH";
+    drawText(ctx, hint, x + w / 2, y + 20, "#b080ff", 1, "center");
+    if (!this.specSnaps.length) drawText(ctx, "CONNECTING TO " + r.name + "...", PX + PW / 2, PY + PH / 2, CYA, 1, "center");
+    if (this.specMsgT > 0) drawText(ctx, this.specMsg, PX + PW / 2, PY + 40, YEL, 1, "center", "#000");
+  }
+
+  // ---------- CONTROLS screen: rebind keyboard / controller separately ----------
+  ctlBack: State = "title"; ctlDev: Dev = "key"; ctlRow = 0; ctlCol = 0; ctlMsg = ""; ctlMsgT = 0;
+  ctlBind: { act: Act; slot: number; dev: Dev; t: number; armed: boolean } | null = null;
+  openControls() { this.ctlBack = this.state; this.state = "controls"; this.ctlRow = 0; this.ctlCol = 0; this.ctlBind = null; this.ctlDev = pad.connected ? "pad" : "key"; audio.init(); }
+  ctlNote(m: string) { this.ctlMsg = m; this.ctlMsgT = 2.5; }
+  updateControls(dt: number) {
+    this.ctlMsgT -= dt; const NR = ACTIONS.length + 2, beep = (f: number) => audio.tone(f, 0.04, "square", 0.05);
+    const B = this.ctlBind;
+    if (B) { // waiting for the new key / button
+      B.t += dt; const lab = ACTIONS.find(a => a.id === B.act)!.label;
+      const apply = (code: string) => {
+        if (RESERVED[B.dev].includes(code)) { this.ctlNote(codeName(B.dev, code) + " IS RESERVED"); return false; }
+        const sw = bind(B.dev, B.act, B.slot, code); this.ctlBind = null; beep(880);
+        this.ctlNote(sw ? codeName(B.dev, code) + " MOVED FROM " + ACTIONS.find(a => a.id === sw)!.label + " (NOW " + codeName(B.dev, binds[B.dev][sw][B.slot] || binds[B.dev][sw][1 - B.slot]) + ")" : lab + " = " + codeName(B.dev, code));
+        return true;
+      };
+      if (hit("Escape") || (B.dev === "pad" && hit("B9")) || B.t > 8) { this.ctlBind = null; typed.length = 0; this.ctlNote("CANCELLED"); return; }
+      if (B.dev === "key") { for (const c of typed.splice(0)) if (apply(c)) break; }
+      else if (!B.armed) { if (!pad.held.size) B.armed = true; } // wait until the button that opened this is released
+      else for (const c of pad.held) if (apply(c)) break;
+      return;
+    }
+    if (hit("Escape", "PadB")) { this.state = this.ctlBack === "controls" ? "title" : this.ctlBack; beep(330); return; }
+    if (hit("Tab", "KeyQ", "KeyE", "PadLB", "PadRB")) { this.ctlDev = this.ctlDev === "key" ? "pad" : "key"; beep(660); }
+    if (hit("ArrowUp", "KeyW", "PadUp")) { this.ctlRow = (this.ctlRow + NR - 1) % NR; beep(520); }
+    if (hit("ArrowDown", "KeyS", "PadDown")) { this.ctlRow = (this.ctlRow + 1) % NR; beep(520); }
+    if (hit("ArrowLeft", "KeyA", "PadLeft")) { if (this.ctlCol === 0) this.ctlDev = this.ctlDev === "key" ? "pad" : "key"; else this.ctlCol = 0; beep(600); }
+    if (hit("ArrowRight", "KeyD", "PadRight")) { if (this.ctlCol === 1) this.ctlDev = this.ctlDev === "key" ? "pad" : "key"; else this.ctlCol = 1; beep(600); }
+    const act = ACTIONS[this.ctlRow];
+    if (act && hit("Backspace", "Delete", "PadX")) { clearBind(this.ctlDev, act.id, this.ctlCol); this.ctlNote(act.label + " SLOT " + (this.ctlCol + 1) + " CLEARED"); beep(330); }
+    if (hit("Enter", "Space", "PadA")) {
+      if (act) { this.ctlBind = { act: act.id, slot: this.ctlCol, dev: this.ctlDev, t: 0, armed: false }; typed.length = 0; beep(760); }
+      else if (this.ctlRow === ACTIONS.length) { resetBinds(this.ctlDev); this.ctlNote((this.ctlDev === "key" ? "KEYBOARD" : "CONTROLLER") + " DEFAULTS RESTORED"); beep(990); }
+      else { this.state = this.ctlBack === "controls" ? "title" : this.ctlBack; beep(330); }
+    }
+  }
+  renderControls() {
+    const x = 56, w = 528, y = 6, h = 348, dev = this.ctlDev, B = this.ctlBind;
+    ctx.fillStyle = "rgba(6,2,14,0.95)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, MAG);
+    drawText(ctx, "CONTROLS", W / 2, y + 7, MAG, 3, "center", "#3a0040");
+    ["KEYBOARD", "CONTROLLER"].forEach((t, i) => { const on = (i === 0) === (dev === "key"), tx = W / 2 - 128 + i * 132;
+      ctx.fillStyle = on ? MAG : "#1a0a30"; ctx.fillRect(tx, y + 28, 124, 13); if (on) { ctx.fillStyle = YEL; ctx.fillRect(tx, y + 41, 124, 1); }
+      drawText(ctx, t, tx + 62, y + 32, on ? WHT : "#8070b0", 1, "center"); });
+    drawText(ctx, pad.connected ? "TAB / LB RB" : "TAB", W / 2 + 140, y + 32, "#5a4a8a", 1);
+    if (dev === "pad" && !pad.connected) drawText(ctx, "NO CONTROLLER DETECTED - PRESS A BUTTON", W / 2, y + 46, SENT_COL, 1, "center");
+    const top = y + 56, C1 = x + 190, C2 = x + 350, CW = 150;
+    drawText(ctx, "ACTION", x + 18, top, "#8070b0", 1); drawText(ctx, "BIND 1", C1 + CW / 2, top, "#8070b0", 1, "center"); drawText(ctx, "BIND 2", C2 + CW / 2, top, "#8070b0", 1, "center");
+    ACTIONS.forEach((a, i) => {
+      const ry = top + 10 + i * 15, sel = i === this.ctlRow, bs = binds[dev][a.id], none = !bs[0] && !bs[1];
+      if (sel) { ctx.fillStyle = "#24083c"; ctx.fillRect(x + 10, ry - 3, w - 20, 13); ctx.fillStyle = YEL; ctx.fillRect(x + 10, ry - 3, 2, 13); }
+      drawText(ctx, a.label, x + 18, ry, sel ? YEL : none ? "#a05070" : WHT, 1);
+      [C1, C2].forEach((cx, s) => {
+        const cur = sel && this.ctlCol === s, wait = !!B && B.act === a.id && B.slot === s && B.dev === dev;
+        ctx.fillStyle = wait ? (Math.floor(this.realT * 6) % 2 ? "#5a1050" : "#3a0838") : cur ? "#3a1060" : "#140628"; ctx.fillRect(cx, ry - 2, CW, 11);
+        if (cur) { ctx.strokeStyle = wait ? MAG : YEL; ctx.strokeRect(cx + 0.5, ry - 1.5, CW - 1, 10); }
+        const fixed = dev === "pad" && a.id === "pause" && s === 0 && !bs[0];
+        drawText(ctx, wait ? "PRESS..." : fixed ? "START (FIXED)" : codeName(dev, bs[s]), cx + CW / 2, ry, wait ? YEL : bs[s] ? (cur ? WHT : CYA) : "#4a3a6a", 1, "center");
+      });
+    });
+    const ry = top + 10 + ACTIONS.length * 15 + 4;
+    ["RESET " + (dev === "key" ? "KEYBOARD" : "CONTROLLER") + " TO DEFAULTS", "BACK"].forEach((t, j) => { const sel = this.ctlRow === ACTIONS.length + j, bx = W / 2 - 110 + j * 150, bw = j ? 70 : 140;
+      ctx.fillStyle = sel ? MAG : "#1a0a30"; ctx.fillRect(bx, ry, bw, 13); if (sel) { ctx.strokeStyle = YEL; ctx.strokeRect(bx + 0.5, ry + 0.5, bw - 1, 12); }
+      drawText(ctx, t, bx + bw / 2, ry + 4, sel ? WHT : "#b080ff", 1, "center"); });
+    const hy = y + h - 22;
+    drawText(ctx, pad.connected ? "D-PAD MOVE   A BIND   X CLEAR   B BACK   LB/RB DEVICE" : "ARROWS MOVE   ENTER BIND   DEL CLEAR   ESC BACK   TAB DEVICE", W / 2, hy, CYA, 1, "center");
+    drawText(ctx, this.ctlMsgT > 0 ? this.ctlMsg : "TAKEN KEYS SWAP   ENTER / ESC / START ARE RESERVED   SAVED ON THIS DEVICE", W / 2, hy + 11, this.ctlMsgT > 0 ? "#60ff80" : "#8070b0", 1, "center");
+    if (B) { const lab = ACTIONS.find(a => a.id === B.act)!.label, bw = 300, bx = (W - bw) / 2, by = 150;
+      ctx.fillStyle = "rgba(6,2,14,0.96)"; ctx.fillRect(bx, by, bw, 54); this.frame(bx, by, bw, 54, YEL);
+      drawText(ctx, (B.dev === "key" ? "PRESS A KEY" : "PRESS A BUTTON / STICK") + " FOR", W / 2, by + 8, WHT, 1, "center");
+      drawText(ctx, lab, W / 2, by + 19, YEL, 2, "center", "#000");
+      drawText(ctx, (B.dev === "key" ? "ESC" : "START / ESC") + " CANCEL   " + Math.ceil(8 - B.t) + "S", W / 2, by + 40, "#8070b0", 1, "center"); }
+  }
+
   // ---------- render ----------
   render() {
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#06020e"; ctx.fillRect(0, 0, W, H);
@@ -772,6 +944,19 @@ class Game {
     if (this.state === "title") { this.renderTitle(); this.drawPadMsg(); return; }
     if (this.state === "lobby") { this.renderTitle(true); this.renderLobby(); this.drawPadMsg(); return; }
     if (this.state === "name") { this.renderTitle(true); this.renderName(); this.drawPadMsg(); return; }
+    if (this.state === "controls") { this.renderTitle(true, true); this.renderControls(); this.drawPadMsg(); return; }
+    // spectating: temporarily swap in the watched player's interpolated state and draw it with the normal renderer
+    const sv = this.specOn() && this.realT - this.endT > 1 ? this.specView() : null, saved: Record<string, any> = {};
+    if (sv) { for (const k in sv) saved[k] = (this as any)[k]; Object.assign(this, sv); }
+    try { this.renderMain(sx, sy); } finally { if (sv) Object.assign(this, saved); }
+    if (this.specOn()) this.renderSpecBanner();
+    this.drawPadMsg();
+    if (this.paused) this.centerBox(["PAUSED", kn("pause") + " / START TO RESUME"], CYA);
+    if (this.duel && this.state === "play" && !this.dead) this.renderDuelBar();
+    if (this.state === "over" && this.realT - this.endT > 0.5 && !this.specOn()) this.renderLeaderboard(false);
+    if (this.state === "win" && this.realT - this.endT > 4.5) this.renderLeaderboard(true);
+  }
+  renderMain(sx: number, sy: number) {
     ctx.setTransform(1, 0, 0, 1, sx * 0.3, sy * 0.3);
     this.renderPanels();
     ctx.setTransform(1, 0, 0, 1, sx, sy);
@@ -786,11 +971,6 @@ class Game {
     for (const p of this.uiParts) { ctx.globalAlpha = clamp(p.life / p.max * 1.5, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), p.s, p.s); } ctx.globalAlpha = 1;
     for (const p of this.projs) { const q = this.projPos(p); ctx.fillStyle = p.col; ctx.fillRect(Math.round(q.x) - 2, Math.round(q.y) - 2, 5, 5); ctx.fillStyle = WHT; ctx.fillRect(Math.round(q.x) - 1, Math.round(q.y) - 1, 3, 3); }
     if (this.flash > 0) { ctx.globalAlpha = Math.min(0.5, this.flash * 2); ctx.fillStyle = this.flashCol; ctx.fillRect(PX, PY, PW, PH); ctx.globalAlpha = 1; }
-    this.drawPadMsg();
-    if (this.paused) this.centerBox(["PAUSED", "P / START TO RESUME"], CYA);
-    if (this.duel && this.state === "play" && !this.dead) this.renderDuelBar();
-    if (this.state === "over" && this.realT - this.endT > 0.5) this.renderLeaderboard(false);
-    if (this.state === "win" && this.realT - this.endT > 4.5) this.renderLeaderboard(true);
   }
   renderCutIn() { // thin strip sliding along the top edge of the play area
     const c = this.cutIn!, t = c.t, e = t < 0.14 ? t / 0.14 : t > 0.68 ? Math.max(0, 1 - (t - 0.68) / 0.22) : 1, out = t > 0.68;
@@ -844,25 +1024,32 @@ class Game {
     this.lobbyLog.slice(-9).forEach((l, i) => drawText(ctx, l, x + 12, y + 36 + i * 10, l.startsWith(this.name + " ") || l.startsWith("YOU") ? YEL : l.includes("LEFT") ? "#8070b0" : "#60ff80", 1));
     const hum = Math.max(this.lobbyHumans, this.lobbyLog.length ? 1 : 0);
     drawText(ctx, "HUMANS " + this.lobbyHumans + "  AI BOTS WILL FILL " + (MAX_PLAYERS - this.lobbyHumans) + " SLOTS", x + w - 12, y + 36, CYA, 1, "right"); void hum;
+    drawText(ctx, (pad.connected ? "Y" : "C") + ": CONTROLS", x + w - 12, y + h - 36, "#b080ff", 1, "right");
     const cd = this.lobbyCd > 0 ? "MATCH STARTS IN " + Math.ceil(this.lobbyCd) + "S" : "WAITING FOR PLAYERS";
     drawText(ctx, cd, W / 2, y + h - 24, YEL, 1, "center");
     drawText(ctx, this.lobbyVoted ? "VOTED TO START - WAITING FOR OTHERS" : (pad.connected ? "START" : "ENTER") + ": VOTE TO START NOW", W / 2, y + h - 12, this.lobbyVoted ? "#60ff80" : WHT, 1, "center");
   }
-  renderTitle(bgOnly = false) {
+  renderTitle(bgOnly = false, starsOnly = false) {
     const t = this.titleT;
     for (const s of this.bgStars) { ctx.fillStyle = s.z > 0.7 ? WHT : "#6a5a9a"; ctx.fillRect(Math.round(s.x / PW * W), Math.round(s.y / PH * H), 1, 1); }
     for (const s of this.streaks) this.drawStreak(s.x / PW * W, s.y / PH * H, s.vx, s.vy, s.col, false);
     if (Math.random() < 0.15) this.streaks.push({ x: rnd(0, PW), y: -10, vx: rnd(-40, 10), vy: rnd(100, 200), life: 3, col: pick(COLORS), big: false });
     const bob = Math.round(Math.sin(t * 2) * 3);
+    if (starsOnly) return;
     if (bgOnly) { drawText(ctx, "STARFALL 101", W / 2, 120, MAG, 6, "center", "#3a0040"); return; }
     drawText(ctx, "STARFALL", W / 2, 70 + bob, MAG, 10, "center", "#3a0040");
     drawText(ctx, "101", W / 2, 130 + bob, CYA, 8, "center", "#003040");
     drawText(ctx, "101-PLAYER NEON SHOOTER BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
     drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 262, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
-    if (Math.floor(t * 2) % 2 === 0) drawText(ctx, pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH", W / 2, 240, WHT, 2, "center");
-    const help = pad.connected ? ["CONTROLLER: L-STICK / D-PAD MOVE   A HOLD FIRE   X HOLD FOCUS   B BOMB", "R-STICK FLICK TARGET: UP RANDOM  RIGHT KOS  DOWN ATTACKERS  LEFT BADGES   START PAUSE",
-      ] : ["MOVE: ARROWS / WASD   FIRE: HOLD Z / SPACE   FOCUS: SHIFT   BOMB: X", "TARGET: 1 RANDOM  2 KOS  3 ATTACKERS  4 BADGES   M MUTE  P PAUSE  V CRT  G LOW-FX",
+    ["LAUNCH", "CONTROLS"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
+      const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")";
+      drawText(ctx, (on ? "> " : "  ") + lab + (on ? " <" : "  "), W / 2, 230 + i * 14, on ? (blink ? WHT : YEL) : "#8070b0", i === 0 ? 2 : 1, "center"); });
+    const mv = (d: Dev) => { const n = (["up", "down", "left", "right"] as Act[]).map(a => actName(d, a)); return n.every(q => q.startsWith("LS")) ? "L-STICK" : n.every(q => q.startsWith("D-")) ? "D-PAD" : n.join("/"); };
+    const help = pad.connected ? ["CONTROLLER: " + mv("pad") + " MOVE   " + pn("fire") + " HOLD FIRE   " + pn("focus") + " HOLD FOCUS   " + pn("bomb") + " BOMB",
+      "TARGET: " + pn("tgt0") + " RANDOM  " + pn("tgt1") + " KOS  " + pn("tgt2") + " ATTACKERS  " + pn("tgt3") + " BADGES   START PAUSE",
+      ] : ["MOVE: " + mv("key") + "   FIRE: HOLD " + kn("fire") + "   FOCUS: " + kn("focus") + "   BOMB: " + kn("bomb"),
+      "TARGET: " + kn("tgt0") + " RANDOM  " + kn("tgt1") + " KOS  " + kn("tgt2") + " ATTACKERS  " + kn("tgt3") + " BADGES   " + kn("mute") + " MUTE  " + kn("pause") + " PAUSE  " + kn("crt") + " CRT",
       "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
     help.forEach((l, i) => drawText(ctx, l, W / 2, 280 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
@@ -890,7 +1077,7 @@ class Game {
       { const nm = r.name + (this.targets.length > 1 ? " +" + (this.targets.length - 1) : ""); drawText(ctx, nm, 36, nm.length > 9 ? 136 : 134, WHT, nm.length > 9 ? 1 : 2); }
       drawText(ctx, "HP", 36, 150, CYA, 1); if (r.hp > 3) drawText(ctx, String(r.hp), 48, 150, MAG, 1); else for (let i = 0; i < 3; i++) { ctx.fillStyle = i < r.hp ? MAG : DIM; ctx.fillRect(48 + i * 7, 149, 5, 5); }
       drawText(ctx, "BADGES " + r.badges, 76, 150, YEL, 1);
-      drawText(ctx, "1-4 SWITCH MODE", 36, 164, "#8070b0", 1);
+      drawText(ctx, pad.connected ? "R-STICK SWITCHES MODE" : kn("tgt0") + "-" + kn("tgt3") + " SWITCH MODE", 36, 164, "#8070b0", 1);
     }
     // grids (all 100 opponents)
     ctx.fillStyle = "#0c0418"; ctx.fillRect(2, 188, LW, 170); this.frame(2, 188, LW, 170, MAG);
@@ -905,13 +1092,13 @@ class Game {
     // right lower: targeting / incoming / time
     const RX = 468; ctx.fillStyle = "#0c0418"; ctx.fillRect(462, 174, LW, 184); this.frame(462, 174, LW, 184, CYA);
     drawText(ctx, "TARGETING", RX, 182, CYA, 2);
-    MODES.forEach((m, i) => { const on = this.mode === i, y = 198 + i * 15; ctx.fillStyle = on ? MAG : "#1a0a30"; ctx.fillRect(RX, y, 164, 12); drawText(ctx, (i + 1) + "  " + m, RX + 4, y + 4, on ? WHT : "#8070b0", 1); drawText(ctx, "RS " + ["UP", "RIGHT", "DOWN", "LEFT"][i], RX + 160, y + 4, on ? WHT : "#5a4a8a", 1, "right"); });
+    MODES.forEach((m, i) => { const on = this.mode === i, y = 198 + i * 15; ctx.fillStyle = on ? MAG : "#1a0a30"; ctx.fillRect(RX, y, 164, 12); drawText(ctx, (i + 1) + "  " + m, RX + 4, y + 4, on ? WHT : "#8070b0", 1); drawText(ctx, pad.connected ? pn(("tgt" + i) as Act) : kn(("tgt" + i) as Act), RX + 160, y + 4, on ? WHT : "#5a4a8a", 1, "right"); });
     const att = this.attackers().length;
     drawText(ctx, "ATTACKERS ON YOU: " + att, RX, 262, att > 3 ? SENT_COL : CYA, 1);
     const pw = Math.round(this.chain * (1 + 0.1 * this.badges) + this.starBoost);
     drawText(ctx, "NEXT ATTACK POWER: " + (this.chain > 0 ? pw : 0), RX, 274, YEL, 1);
-    if (pad.connected) { drawText(ctx, "PAD: A FIRE  X FOCUS  B BOMB", RX, 290, "#8070b0", 1); drawText(ctx, "R-STICK FLICK = TARGET MODE", RX, 300, "#8070b0", 1); }
-    else { drawText(ctx, "FIRE: HOLD Z/SPACE", RX, 290, "#8070b0", 1); drawText(ctx, "FOCUS: SHIFT  BOMB: X", RX, 300, "#8070b0", 1); }
+    if (pad.connected) { drawText(ctx, "PAD: " + pn("fire") + " FIRE  " + pn("focus") + " FOCUS  " + pn("bomb") + " BOMB", RX, 290, "#8070b0", 1); drawText(ctx, "R-STICK = TARGET MODE", RX, 300, "#8070b0", 1); }
+    else { drawText(ctx, "FIRE: HOLD " + kn("fire"), RX, 290, "#8070b0", 1); drawText(ctx, "FOCUS: " + kn("focus") + "  BOMB: " + kn("bomb"), RX, 300, "#8070b0", 1); }
     drawText(ctx, this.net.online ? "ONLINE" : "OFFLINE", RX + 164, 342, this.net.online ? "#60ff80" : "#5a4a8a", 1, "right");
     if (this.warns.length || this.projs.some(p => !p.out)) { if (Math.floor(this.realT * 6) % 2) { ctx.fillStyle = SENT_COL; ctx.fillRect(RX, 314, 164, 18); drawText(ctx, "!! INCOMING ATTACK !!", RX + 82, 321, "#000", 1, "center"); } }
     drawText(ctx, "TIME " + Math.floor(this.time / 60) + ":" + String(Math.floor(this.time % 60)).padStart(2, "0") + (this.calm ? "  CALM PHASE" : "  SPEED x" + this.ramp.toFixed(2)), RX, 342, "#8070b0", 1);

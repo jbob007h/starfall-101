@@ -9,7 +9,8 @@
     "typecheck": "tsc",
     "serve": "python3 -m http.server 8080 -d dist",
     "build:server": "esbuild server/index.ts --bundle --platform=node --target=node18 --external:ws --outfile=server/dist/index.js",
-    "start": "node server/dist/index.js"
+    "start": "node server/dist/index.js",
+    "build:single": "npm run build && node -e \"const f=require('fs');const h=f.readFileSync('index.html','utf8'),js=f.readFileSync('dist/main.js','utf8');f.writeFileSync('/workspace/STARFALL101.html',h.replace('<script src=\\\"main.js\\\"></script>',()=>'<script type=\\\"module\\\">'+js+'</script>'))\""
   },
   "keywords": [],
   "author": "",
