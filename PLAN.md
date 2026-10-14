@@ -131,3 +131,11 @@ Juice:
 - Final duel (you + 1 CPU): the last CPU powers up to 6 HP, regenerates 1 HP / 40 s, background AI-vs-AI attrition is off; only light attrition (~1 dmg / 9 s, after a 20 s grace) applies, so its survival mainly depends on the attacks you send (rush 1 / wave 2 / boss 3 dmg, +1 at power 50+). Passive-play duel: ~76 s average (was ~47 s).
 - CPU mini-bosses come from a per-human scheduler (sim): none before 2:00 or during the calm opening; then one every 60-90 s (>25 left), 45-65 s (11-25 left), 30-45 s (final 10 / duel). Regular bot sends are rush/wave only. Client caps active mini-bosses at 2; extra incoming bosses wait (warning keeps flashing) until one is destroyed.
 - Measured (100 fast-forward sims): incoming mini-bosses per match 0-2m 0 / 2-4m 2.0 / 4-5m ~1.0 / 5m+ ~4.2 (before: 0 / 0.33 / 0.5 / 3.2, sometimes 5 within 25 s).
+
+## Epic duel, names, leaderboard (v9)
+- Final duel: last CPU powers up to 14 HP (set the moment the duel starts), regenerates 1 HP / 17 s, light attrition (~1 / 9 s after 20 s grace), keeps sending mini-bosses every 30-45 s. Prominent "FINAL RIVAL" 14-segment HP bar at the top of the field. Sims (100 each): passive duel avg ~181 s (80-450); attacking once per 7 s (35% rush / 45% wave / 20% boss) wins in ~41 s with ~6.7 attacks.
+- Pilot name entry after the title (keyboard typing A-Z 0-9 + Backspace; pad: d-pad up/down letter, left/right move, A next, B delete, Start OK), max 10 chars, saved in localStorage (`sf101name`) and prefilled; sent to the server on join. `?name=` only prefills.
+- Bots get unique arcade callsigns (sim.ts `botNames`, used offline and by the server): NOVA, VIPER7, HYPERJOLT, ACE42...
+- When no humans remain, the sim resolves the remaining bots instantly (placements + KO credit), so every slot has a place.
+- Leaderboard on game over / victory: all 101 places (name, CPU/HUM/YOU, "KO BY NAME", yellow star next to pilots YOU knocked out), own row highlighted, scroll with arrows/W/S/stick (PageUp/Down), Enter/Start to play again. Online it keeps filling live from server KO events.
+- Opponent grid: big yellow/magenta X over every mini-screen YOU knocked out.

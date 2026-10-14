@@ -18,8 +18,17 @@ await p.waitForTimeout(400);
 console.log("pad title:", await p.evaluate(() => [window.__game.padMsg, window.__game.padMsgT > 0]));
 await p.screenshot({ path: "title_pad.png" });
 const tap = async i => { await p.evaluate(i => window.__pad.set(i, true), i); await p.waitForTimeout(80); await p.evaluate(i => window.__pad.set(i, false), i); await p.waitForTimeout(80); };
+await tap(9); // Start -> name entry
+await p.waitForTimeout(300);
+for (let i = 0; i < 10; i++) await p.keyboard.press("Backspace");
+await p.keyboard.type("ACE"); await tap(12); await tap(12); await tap(15); // pad picker: new letter A -> B, then move right
+for (const k of ["Digit7", "Digit7"]) await p.keyboard.press(k);
+await p.waitForTimeout(300);
+console.log("name entry:", await p.evaluate(() => [window.__game.state, window.__game.nameBuf.join("")]));
+await p.screenshot({ path: "screenshot10.png" });
 await tap(9); // Start -> lobby
 await p.waitForTimeout(900);
+console.log("name saved:", await p.evaluate(() => [window.__game.name, localStorage.getItem("sf101name")]));
 console.log("lobby:", await p.evaluate(() => [window.__game.state, window.__game.lobbyCount, window.__game.lobbyLog.join("|")]));
 await p.screenshot({ path: "lobby.png" });
 await tap(9); // Start in lobby -> vote start (offline: starts now)
@@ -91,10 +100,20 @@ await p.screenshot({ path: "screenshot9.png" });
 console.log("upgrade tiers [t0,t1,t2] / hp:", await p.evaluate(() => { const g = window.__game, c = [0, 0, 0]; g.enemies.filter(e => !e.boss).forEach(e => c[e.up ?? 0]++); return [c, g.enemies.slice(0, 6).map(e => e.hp)]; }));
 console.log("share @60/150/240/330/420s:", await p.evaluate(() => [60, 150, 240, 330, 420].map(t => { const g = window.__game; const ot = g.time; g.time = t; let s = [0, 0, 0]; const n0 = g.enemies.length; for (let i = 0; i < 50; i++) g.spawnFormation(10, 0, 0, false, -1); const add = g.enemies.splice(n0); add.forEach(e => s[e.up]++); g.time = ot; return s.map(x => Math.round(x / 5) + "%").join("/"); })));
 const m0 = await p.evaluate(() => ({ stage: window.__audio.tier, bpm: window.__audio.tempo }));
-await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; g.rivals.forEach((r, i) => { if (i >= 6) r.alive = false; }); });
+await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; let pl = 101; g.rivals.forEach((r, i) => { if (i >= 20 && i < 30) g.koRival(r, -1, i - 12, 0); else if (i >= 6 && r.alive) { r.alive = false; r.place = pl--; r.koBy = (i * 7) % 6; } }); });
 await p.waitForTimeout(2600);
 console.log("music stage before -> after field shrinks to 7:", m0, "->");
 console.log("music:", await p.evaluate(() => { const a = window.__audio; return { playing: a.playing, stage: a.tier, bpm: a.tempo, bar: a.seq && a.seq.bar }; }));
+await p.waitForTimeout(600);
+await p.screenshot({ path: "screenshot12.png" });
+console.log("bot names:", await p.evaluate(() => window.__game.rivals.slice(0, 8).map(r => r.name).join(",")), "unique:", await p.evaluate(() => new Set(window.__game.rivals.map(r => r.name)).size));
+await p.evaluate(() => { window.__game.inv = 0; window.__game.gameOver(); });
+await p.waitForTimeout(1200);
+await p.keyboard.down("ArrowDown"); await p.waitForTimeout(700); await p.keyboard.up("ArrowDown");
+await p.waitForTimeout(300); const scrolled = await p.evaluate(() => window.__game.lbScroll);
+await p.evaluate(() => { window.__game.lbScroll = 0; }); await p.waitForTimeout(100);
+await p.screenshot({ path: "screenshot11.png" }); console.log("scroll after holding down:", scrolled);
+console.log("leaderboard:", await p.evaluate(() => { const g = window.__game; return { state: g.state, place: g.place, scroll: g.lbScroll, myKos: g.myKos, unplaced: g.rivals.filter(r => !r.place).length }; }));
 console.log("missing glyphs:", await p.evaluate(() => [...window.__missingGlyphs].join("")));
 const fps = await p.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { n++; if (performance.now() - t < 1000) requestAnimationFrame(f); else r(n); }; requestAnimationFrame(f); }));
 console.log("fps", fps, "errors:", errs);

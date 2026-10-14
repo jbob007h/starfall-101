@@ -5,7 +5,7 @@
 // Game-side ids: the local player is `localId` (-1); the 100 others are 0..99 in
 // mini-screen order. Server-side ids are global slots 0..100; transports convert.
 // ---------------------------------------------------------------------------
-import { MatchSim, Tier } from "./sim";
+import { MatchSim, Tier, botNames } from "./sim";
 export type { Tier } from "./sim";
 export const MAX_PLAYERS = 101;
 export const LOCAL = -1;
@@ -85,7 +85,8 @@ export class LocalSimTransport implements Transport {
   private fillBots() {
     if (this.lobby.length >= MAX_PLAYERS - 1) return;
     const humans = this.lobby.length + 1; let n = 0;
-    while (this.lobby.length < MAX_PLAYERS - 1) this.lobby.push({ id: 0, name: "BOT" + (++n), isBot: true });
+    const bn = botNames(MAX_PLAYERS, [this.name, ...this.lobby.map(p => p.name)]);
+    while (this.lobby.length < MAX_PLAYERS - 1) this.lobby.push({ id: 0, name: bn[n++], isBot: true });
     this.emit({ type: "lobbyJoin", player: { id: 0, name: "BOTS", isBot: true }, count: MAX_PLAYERS });
     this.emit({ type: "lobbyCountdown", seconds: this.lobbySeconds * 0.4, humans });
   }

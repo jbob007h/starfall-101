@@ -3,7 +3,7 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { MatchSim, Tier } from "../src/sim";
+import { MatchSim, Tier, botNames } from "../src/sim";
 
 const PORT = Number(process.env.PORT) || 8080;
 const MAX = 101;
@@ -31,7 +31,7 @@ const matches = new Map<number, Match>();
 
 const send = (c: Client, o: object) => { if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(o)); };
 const lobbyBroadcast = (o: object) => { for (const c of lobby.members.values()) send(c, o); };
-const clean = (s: unknown) => String(s || "PILOT").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || "PILOT";
+const clean = (s: unknown) => String(s || "PILOT").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || "PILOT";
 
 function leaveCurrent(c: Client) {
   if (lobby.members.delete(c.conn)) lobbyBroadcast({ t: "lobbyLeave", id: c.conn, name: c.name, count: lobby.members.size });
@@ -48,7 +48,7 @@ function joinLobby(c: Client, name: string) {
 function startMatch() {
   const humans = [...lobby.members.values()]; lobby.members.clear();
   const players: { name: string; isBot: boolean; ai: boolean; c?: Client }[] = humans.map(c => ({ name: c.name, isBot: false, ai: false, c }));
-  let n = 0; while (players.length < MAX) players.push({ name: "BOT" + (++n), isBot: true, ai: true });
+  const bn = botNames(MAX, humans.map(c => c.name)); let n = 0; while (players.length < MAX) players.push({ name: bn[n++], isBot: true, ai: true });
   for (let i = players.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [players[i], players[j]] = [players[j], players[i]]; }
   const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim };
   const toAll = (o: object) => { for (const c of m.clients.values()) send(c, o); };

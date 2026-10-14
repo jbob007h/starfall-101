@@ -19,7 +19,24 @@ export function pickBossVariant(power: number, time: number) {
   const unlocked = Math.min(BOSS_VARIANTS, 2 + (time > 120 || power >= 50 ? 1 : 0) + (time > 200 || power >= 60 ? 1 : 0));
   return Math.random() < 0.4 ? unlocked - 1 : Math.floor(Math.random() * unlocked);
 }
-export const DUEL_HP = 6;
+export const DUEL_HP = 14, DUEL_REGEN = 17;
+const CALLSIGNS = ["NOVA", "VIPER", "ZEPHYR", "RAZOR", "COMET", "BLITZ", "ORBIT", "PULSAR", "QUASAR", "NEBULA", "GHOST", "FALCON", "HAWK", "ROGUE",
+  "SPARK", "TITAN", "ECHO", "FLUX", "ONYX", "LYNX", "RAPTOR", "SABER", "VORTEX", "JINX", "KAIJU", "MANTA", "NEON", "PIXEL", "TURBO", "ZERO",
+  "ACE", "BLAZE", "CYGNUS", "DRACO", "EMBER", "FROST", "GAMMA", "HELIX", "ION", "JOLT", "KOMET", "LASER", "MAVERICK", "NYX", "OMEGA", "PHOTON",
+  "QUAKE", "RADAR", "SIGMA", "TEMPO", "ULTRA", "VEGA", "WARP", "XENON", "YUKI", "ZAP", "ASTRO", "BOLT", "COBRA", "DYNAMO", "ROCKET", "STRIKER",
+  "APEX", "BANSHEE", "CIPHER", "DELTA", "RIPTIDE", "SOLAR", "LUNA", "STARLA", "HYDRA", "MIRAGE", "NITRO", "PHANTOM", "RAVEN", "SHOGUN", "TALON",
+  "VOLT", "WRAITH", "ZENITH", "AURORA", "BISHOP", "CRUX", "DJINN", "FURY", "GLITCH", "HAVOC", "KESTREL", "MOTH", "OZONE", "PYRO", "RONIN"];
+const PREFIX = ["MEGA", "HYPER", "DARK", "STAR", "NEO", "SKY", "RED"];
+/** Unique arcade-style callsigns for bots (NOVA, VIPER7, ZEPHYR, HYPERJOLT, ACE99...). */
+export function botNames(n: number, taken: string[] = []) {
+  const used = new Set(taken.map(t => t.toUpperCase())), out: string[] = [];
+  while (out.length < n) {
+    const b = pick(CALLSIGNS), r = Math.random();
+    let nm = r < 0.5 ? b : r < 0.8 ? b + Math.floor(rnd(2, 10)) : r < 0.9 ? b + Math.floor(rnd(10, 100)) : pick(PREFIX) + b;
+    if (nm.length > 10 || used.has(nm)) continue; used.add(nm); out.push(nm);
+  }
+  return out;
+}
 export class MatchSim {
   slots: Slot[]; time = 0; over = false; duelT = -1; bossCd: Record<number, number> = {};
   /** players: in slot order. ai=true slots are driven by this sim (bots, or simulated humans offline). */
@@ -48,7 +65,19 @@ export class MatchSim {
     this.out.ko(s.id, by, s.place, s.badges);
     for (const b of this.slots) if (b.target === s.id) b.target = -2;
     const al = this.alive();
+    if (al.length === 2 && al.some(x => !x.ai) && this.duelT < 0) { this.duelT = this.time; for (const b of al) if (b.ai) { b.hp = DUEL_HP; b.regen = 0; } } // final CPU powers up
+    if (!this.over && al.length > 1 && !al.some(x => !x.ai)) { this.finishBots(); return; }
     if (!this.over && (al.length <= 1 || !al.some(x => !x.ai))) { this.over = true; this.out.end(al.length === 1 ? al[0].id : -2); }
+  }
+  /** No humans left: resolve the remaining bots instantly so every slot gets a placement and KO credit (leaderboard). */
+  private finishBots() {
+    this.over = true;
+    const al = this.alive().map(b => ({ b, k: b.hp + b.skill * 3 + b.badges * 0.5 + Math.random() * 2 })).sort((x, y) => x.k - y.k).map(x => x.b);
+    while (al.length > 1) {
+      const v = al.shift()!, k = pick(al); v.alive = false; v.hp = 0; v.place = al.length + 1; k.badges += 1 + Math.floor(v.badges / 2);
+      this.out.ko(v.id, k.id, v.place, v.badges);
+    }
+    al[0].place = 1; this.out.end(al[0].id);
   }
   private damage(b: Slot, dmg: number, from: number) {
     b.hp -= dmg; b.regen = 0; this.out.hit(b.id, from);
@@ -62,7 +91,7 @@ export class MatchSim {
    *  so its survival depends mainly on the attacks the human sends (~60-90 s if you play passively). */
   private duelTick(dt: number, al: Slot[]) {
     const b = al.find(x => x.ai); if (!b) return;
-    b.regen += dt; if (b.regen > 40 && b.hp < DUEL_HP) { b.hp++; b.regen = 0; }
+    b.regen += dt; if (b.regen > DUEL_REGEN && b.hp < DUEL_HP) { b.hp++; b.regen = 0; }
     if (this.time - this.duelT > 20 && Math.random() < dt / 9) this.damage(b, 1, -2);
   }
   /** Mini-boss attacks on each human: none before 2:00 / calm; every ~60-90 s mid-game, ~30-45 s in the final 10 / duel. */
@@ -81,7 +110,6 @@ export class MatchSim {
     if (this.over) return;
     this.time += dt;
     const al0 = this.alive(), duel = al0.length <= 2 && al0.some(x => !x.ai);
-    if (duel && this.duelT < 0) { this.duelT = this.time; for (const b of al0) if (b.ai) { b.hp = DUEL_HP; b.regen = 0; } } // final CPU powers up
     if (duel) { this.duelTick(dt, al0); if (this.over) return; }
     const excess = duel ? 0 : this.alive().length - this.aliveTarget();
     const rate = (this.calm() ? 0.15 : 0.5) + Math.max(0, excess) * 0.9; // abstract AI-vs-AI fights

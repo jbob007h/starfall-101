@@ -10,7 +10,7 @@ for (const n of names) {
 }
 const ev = (p, f, a) => p.evaluate(f, a);
 console.log("online:", await Promise.all(pages.map(p => ev(p, () => window.__game.net.online))));
-for (const p of pages) { await p.keyboard.press("Enter"); await p.waitForTimeout(300); }
+for (const p of pages) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(300); }
 await pages[0].waitForTimeout(1200);
 for (const p of pages) console.log("lobby", await ev(p, () => [window.__game.state, window.__game.lobbyHumans, window.__game.lobbyCount, window.__game.lobbyLog.join("|"), Math.ceil(window.__game.lobbyCd)]));
 await pages[0].screenshot({ path: "screenshot5.png" });

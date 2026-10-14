@@ -48,3 +48,6 @@ CPU players drop faster (top 20 at ~4:00, top 10 at ~5:00, duel at ~6:35). From 
 
 ## Final duel & mini-bosses
 The last CPU in the duel is tougher (6 HP, slow regen, little random attrition): beat it with your attacks (~75 s if passive). CPUs send mini-bosses roughly every 60-90 s from 2:00 and every 30-45 s in the final 10; at most 2 mini-bosses are active at once, extras queue.
+
+## Duel, names & leaderboard
+The final duel CPU has 14 HP and regenerates; beat it with a sustained barrage (~7 attacks). Enter your pilot name after the title (saved locally, used online). Bots have arcade callsigns. After you are out (or win), a scrollable 101-place leaderboard shows who KO'd whom, with stars for your KOs; your KOs also get a big X on the grid.
