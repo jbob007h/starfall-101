@@ -1,5 +1,5 @@
 import { drawText, textWidth } from "./font";
-import { Audio, renderMusicPreview, SOUNDTRACKS } from "./audio";
+import { Audio, renderMusicPreview, TRACKS } from "./audio";
 import { DUEL_HP } from "./sim";
 import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport, Snap } from "./net";
@@ -153,7 +153,7 @@ class Game {
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
       this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
-    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.setRemaining(101, false); audio.startMusic();
+    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.updateMusic({ remaining: 101, duel: false, lowHealth: false, chain: 0 }); audio.startMusic();
     this.popup("STAGE START!", PW / 2, PH / 2 - 20, YEL, 3);
   }
   // ---------- network / lobby ----------
@@ -347,6 +347,7 @@ class Game {
     }
     if (actHit("mute")) audio.toggleMute();
     if (actHit("song")) { audio.setSoundtrack(audio.soundtrack + 1); this.popup("MUSIC: " + audio.soundtrackName, PW / 2, PH - 84, CYA, 1.5); }
+    audio.pauseMusic(this.paused);
     if (this.paused) return;
     for (let k = 0; k < 4; k++) if (actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
     if (this.hitstop > 0) { this.hitstop--; return; }
@@ -355,7 +356,7 @@ class Game {
     this.updatePlayer(dt); this.updateChain(dt); this.spawnFormations(dt); this.updateEnemies(dt); this.updateBullets(dt);
     this.updateItems(dt); this.updateWaves(dt); this.updateWarns(dt); this.net.tick(dt, this.hints()); this.updateRivals(dt); this.updateProjs(dt); this.updateFx(dt);
     this.randCd -= dt; this.computeTargets();
-    const rem = this.remaining; audio.duel = this.duel; audio.setRemaining(rem, this.duel); audio.lowHealth = this.hp === 1;
+    audio.updateMusic({ remaining: this.remaining, duel: this.duel, lowHealth: this.hp === 1, chain: this.chain });
   }
 
   updatePlayer(dt: number) {
@@ -1298,7 +1299,7 @@ class Game {
   }
 }
 
-const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = SOUNDTRACKS.map(s => ({ name: s.name, stages: s.song.stages.map(st => ({ name: st.name, bpm: st.bpm, bars: st.order.length })) }));
+const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = TRACKS.map(t => ({ id: t.id, name: t.title, bpm: t.bpm, sections: t.sections.map(s => ({ id: s.id, name: s.name, bars: s.chords.trim().split(/\s+/).length })) }));
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };

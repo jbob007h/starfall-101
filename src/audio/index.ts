@@ -1,28 +1,18 @@
-import { Sequencer } from "./sequencer";
-import { genesisOutput } from "./genesis";
-import { SONG } from "./songs";
-import { SONG_TF, TF_THRESHOLDS } from "./songs_tf";
-import { Song } from "./sequencer";
-import { StreamPlayer, StreamTrack } from "./stream";
-import { TRANCE1, TRANCE2 } from "./trance";
-/** Soundtracks: 0 = original "Starfall Overdrive" (6 stages), 1 = "Thunder Blitz" (8 sections),
- *  2/3 = pre-rendered trance (8 streamed loop sections, same thresholds as Thunder Blitz). */
-const streamSong = (t: StreamTrack): Song => ({ name: t.name, channels: [], patches: {}, patterns: {}, stages: t.sections.map(s => ({ name: s.name, bpm: s.bpm, order: new Array(s.bars).fill("") })) });
-export const SOUNDTRACKS: { name: string; song: Song; thresholds: number[]; stream?: StreamTrack }[] = [
-  { name: "STARFALL OVERDRIVE", song: SONG, thresholds: [75, 50, 25, 10] },
-  { name: "THUNDER BLITZ", song: SONG_TF, thresholds: TF_THRESHOLDS },
-  { name: TRANCE1.name, song: streamSong(TRANCE1), thresholds: TF_THRESHOLDS, stream: TRANCE1 },
-  { name: TRANCE2.name, song: streamSong(TRANCE2), thresholds: TF_THRESHOLDS, stream: TRANCE2 },
-];
+import { MusicEngine, CHANNELS } from "./music/engine";
+import { TRACKS, PATCHES } from "./music/songs";
+import { MusicDirector, PLANS, GameMusicState } from "./music/director";
+export { MusicEngine, MusicDirector, TRACKS, PATCHES, PLANS, CHANNELS };
+export type { GameMusicState };
+/** Soundtrack menu entries (director plans): 0 = adaptive score across all three tracks, 1-3 = one track. */
+export const SOUNDTRACKS = PLANS.map(p => ({ name: p.name }));
 const LS_ST = "sf101soundtrack";
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
-// Procedural chiptune SFX + Genesis-style adaptive FM music (Web Audio).
+// Procedural chiptune SFX + Genesis-style adaptive FM music (Web Audio). Music lives in ./music/.
 export class Audio {
   ctx: AudioContext | null = null;
   master!: GainNode; sfxBus!: GainNode; musBus!: GainNode; filter!: BiquadFilterNode;
   noise!: AudioBuffer;
-  playing = false; step = 0; nextTime = 0; timer = 0;
-  tier = 0; pendingTier = 0; tempo = 112; lowHealth = false; muted = false;
+  lowHealth = false; muted = false; duel = false;
   lastShot = 0;
   init() {
     if (this.ctx) { this.ctx.resume(); return; }
@@ -32,6 +22,9 @@ export class Audio {
     this.sfxBus = c.createGain(); this.sfxBus.gain.value = 0.6; this.sfxBus.connect(this.master);
     this.filter = c.createBiquadFilter(); this.filter.type = "lowpass"; this.filter.frequency.value = 9000; this.filter.Q.value = 6;
     this.musBus = c.createGain(); this.musBus.gain.value = 0.55; this.musBus.connect(this.master);
+    this.music = new MusicEngine(c, this.musBus, TRACKS, PATCHES); this.music.setVolume(2, 0);
+    this.director = new MusicDirector(this.music); this.director.setPlan(this.soundtrack);
+    this.music.on("beat", e => this.heartbeat(e.time), { ahead: true }); // low-health heartbeat locked to the beat
     const len = c.sampleRate; this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   }
@@ -90,69 +83,48 @@ export class Audio {
   tripleBomb() { const c = this.ctx; if (!c) return; const t = c.currentTime;
     for (let i = 0; i < 3; i++) { this.noiseHit(0.9, 0.6, 50, t + i * 0.18); this.tone(140 - i * 25, 0.9, "sawtooth", 0.3, 25, t + i * 0.18); this.tone(70, 0.6, "sine", 0.6, 30, t + i * 0.18); }
     [0, 4, 7, 12].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.2, "square", 0.12, 0, t + 0.6 + i * 0.06)); }
-  // ---- Music: Genesis-style FM tracker (see genesis.ts / sequencer.ts / songs.ts) ----
-  seq: Sequencer | null = null; private timer2 = 0; duel = false;
-  /** 0..4 = stage by players remaining (101-75, 75-50, 50-25, 25-10, final 10 = boss theme); duel => stage 5. Applied on the next bar line. */
-  /** 0..1 position within the current beat of the music (0 = on the beat), for beat-synced visuals. */
-  beatPhase() {
-    if (this.sp) return this.sp.beatPhase();
-    const q = this.seq, c = this.ctx; if (!q || !c || !q.running) return 0.5;
-    const beat = 60 / q.bpm, bar = beat * 4; let s = q.nextBarTime - bar; const now = c.currentTime;
-    while (s > now) s -= bar; return ((now - s) / beat) % 1;
-  }
-  setTier(t: number) { this.pendingTier = t; if (this.seq) { this.seq.pending = this.duel ? 5 : Math.max(0, Math.min(4, t)); } }
+  // ---- Music: FM engine (./music/engine.ts) driven by the director (./music/director.ts) ----
+  /** Direct engine access for one-off game cues: audio.music.queue({ section: "C" }), setChannel, setTempoOffset, on("bar", ...). */
+  music: MusicEngine | null = null;
+  director: MusicDirector | null = null;
+  private gs: GameMusicState = { remaining: 101, duel: false, lowHealth: false, chain: 0 };
   soundtrack = (() => { try { const v = Number(localStorage.getItem(LS_ST)); return v >= 0 && v < SOUNDTRACKS.length ? Math.floor(v) : 0; } catch { return 0; } })();
-  private seqs: Sequencer[] = []; sp: StreamPlayer | null = null; private sps: StreamPlayer[] = []; private out: AudioNode | null = null;
   get soundtrackName() { return SOUNDTRACKS[this.soundtrack].name; }
-  /** Stage for the current soundtrack from players remaining (duel => last stage). */
-  stageFor(remaining: number, duel: boolean) {
-    const st = SOUNDTRACKS[this.soundtrack], n = st.song.stages.length; if (duel) return n - 1;
-    const i = st.thresholds.findIndex(th => remaining > th); return i < 0 ? st.thresholds.length : i;
+  get playing() { return !!this.music?.playing; }
+  /** Director stage (index into the active plan's progression). */
+  get tier() { return this.director?.stage ?? 0; }
+  get tempo() { return this.music?.bpm ?? 0; }
+  /** 0..1 position within the current beat of the music (0 = on the beat), for beat-synced visuals. */
+  beatPhase() { return this.music ? this.music.beatPhase() : 0.5; }
+  /** Feed the live game state to the music director (call every frame during a match). */
+  updateMusic(s: Partial<GameMusicState>) {
+    Object.assign(this.gs, s); if (s.lowHealth !== undefined) this.lowHealth = s.lowHealth; if (s.duel !== undefined) this.duel = s.duel;
+    this.director?.update(this.gs);
   }
-  /** Set music stage from the match state (works for any soundtrack). */
-  setRemaining(remaining: number, duel: boolean) { this.lastRem = remaining; this.lastDuel = duel; this.pendingTier = this.stageFor(remaining, duel); if (this.seq) this.seq.pending = this.pendingTier; if (this.sp) this.sp.pending = this.pendingTier; }
-  private lastRem = 101; private lastDuel = false;
-  /** Switch soundtrack (saved); if music is playing it restarts on the new soundtrack at the matching stage. */
+  /** Back-compat: players remaining + duel. */
+  setRemaining(remaining: number, duel: boolean) { this.updateMusic({ remaining, duel }); }
+  /** Switch soundtrack (saved); if music is playing it restarts on the new soundtrack at the matching point. */
   setSoundtrack(i: number) {
     i = ((i % SOUNDTRACKS.length) + SOUNDTRACKS.length) % SOUNDTRACKS.length; if (i === this.soundtrack) return;
     try { localStorage.setItem(LS_ST, String(i)); } catch { /* private mode */ }
-    const was = this.playing; if (was) this.stopMusic();
-    this.soundtrack = i; this.seq = null; this.sp = null; this.pendingTier = this.stageFor(this.lastRem, this.lastDuel);
-    if (was) this.startMusic();
+    this.soundtrack = i; this.director?.setPlan(i);
   }
-  startMusic() {
-    const c = this.ctx; if (!c) return;
-    const stt = SOUNDTRACKS[this.soundtrack];
-    if (stt.stream) {
-      if (!this.sp) this.sp = this.sps[this.soundtrack] ??= new StreamPlayer(c, this.musBus, stt.stream);
-      if (this.playing) return; this.playing = true; this.sp.start(this.pendingTier); this.tier = this.pendingTier; this.tempo = this.sp.bpm; this.beatT = c.currentTime + 0.1;
-      this.timer2 = window.setInterval(() => this.schedule(), 25); return;
-    }
-    if (!this.out) this.out = genesisOutput(c, this.musBus);
-    if (!this.seq) this.seq = this.seqs[this.soundtrack] ??= new Sequencer(c, this.out, SOUNDTRACKS[this.soundtrack].song);
-    if (this.playing) return; this.playing = true;
-    this.seq.pending = this.pendingTier; this.seq.start(c.currentTime + 0.1); this.tier = this.pendingTier; this.beatT = c.currentTime + 0.1;
-    this.timer2 = window.setInterval(() => this.schedule(), 25);
-  }
-  stopMusic() { this.playing = false; this.seq?.stop(); this.sp?.stop(); clearInterval(this.timer2); }
-  private beatT = 0;
-  schedule() {
-    const c = this.ctx, sp = this.sp, q = this.seq; if (!c || (!q && !sp)) return;
-    let bpm: number;
-    if (sp) { sp.tick(); this.tier = sp.stage; this.tempo = bpm = sp.bpm; }
-    else { q!.scheduleUntil(c.currentTime + 0.15); this.tier = q!.stage; this.tempo = bpm = q!.bpm; }
-    // heartbeat on low health, locked to the beat
-    while (this.beatT < c.currentTime + 0.15) { if (this.lowHealth) { this.tone(60, 0.15, "sine", 0.5, 30, this.beatT); this.tone(55, 0.12, "sine", 0.35, 28, this.beatT + 0.16); } this.beatT += 60 / bpm; }
+  startMusic() { if (!this.director || this.music?.playing) return; this.director.start({ ...this.gs, lowHealth: this.lowHealth, duel: this.duel }); }
+  stopMusic() { this.music?.stop(); }
+  /** Pause / resume the music in place (game pause). */
+  pauseMusic(p: boolean) { this.music?.setPaused(p); }
+  private heartbeat(t: number) {
+    if (!this.lowHealth || this.music?.paused) return;
+    this.tone(60, 0.15, "sine", 0.5, 30, t); this.tone(55, 0.12, "sine", 0.35, 28, t + 0.16);
   }
 }
 
-/** Offline preview: render `secs` of a music stage to a 16-bit stereo WAV (used by music-preview.mjs). */
-export async function renderMusicPreview(stage: number, secs: number, sr = 44100, soundtrack = 0): Promise<ArrayBuffer> {
-  const SONG = SOUNDTRACKS[soundtrack]?.song ?? SOUNDTRACKS[0].song;
+/** Offline preview: render `secs` of a track (all sections in order) to a 16-bit stereo WAV (used by music-preview.mjs). */
+export async function renderMusicPreview(track: number, secs: number, sr = 44100): Promise<ArrayBuffer> {
   const oc = new OfflineAudioContext(2, Math.floor(sr * secs), sr);
-  const bus = oc.createGain(); bus.gain.value = 0.5; bus.connect(oc.destination);
-  const seq = new Sequencer(oc, genesisOutput(oc, bus), SONG); seq.pending = Math.min(stage, SONG.stages.length - 1);
-  seq.start(0.05); seq.scheduleUntil(secs);
+  const bus = oc.createGain(); bus.gain.value = 0.55 * 0.5; bus.connect(oc.destination);
+  const m = new MusicEngine(oc, bus, TRACKS, PATCHES); m.autoTick = false; m.setVolume(2, 0);
+  m.play(track, { loop: "song", at: 0.05 }); m.scheduleUntil(secs);
   const buf = await oc.startRendering();
   const n = buf.length, out = new DataView(new ArrayBuffer(44 + n * 4)), w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
   w(0, "RIFF"); out.setUint32(4, 36 + n * 4, true); w(8, "WAVE"); w(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 2, true);

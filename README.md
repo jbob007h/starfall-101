@@ -35,7 +35,27 @@ Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHAN
 Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 40 (mini-boss); bullet wave tier starts at chain 15.
 
 ## Music
-Genesis-style FM soundtrack (src/audio/: genesis.ts synth, sequencer.ts tracker, songs.ts composition). Stage changes with players remaining; final 10 = boss tune. `node music-preview.mjs` (with `npm run serve`) writes per-stage WAVs to music_preview/.
+Genesis-style FM soundtrack synthesized live in Web Audio (no audio files), in `src/audio/music/`:
+- `engine.ts` - `MusicEngine`: 2-op FM voices, DAC drums, PSG noise; channels FM1 lead, FM2 echo, FM3 bass, FM4 arp, FM5 pad/guitar, FM6 DAC, PSG. Every change lands on a musical boundary.
+- `songs.ts` - three tracks (AURORA BREACH 172 BPM, HULL INTEGRITY 140, LAST VECTOR 156), each with 8-bar sections A/B/C that loop on their own, so sections work as intensity levels.
+- `director.ts` - maps game state to the engine; edit this to change how the music reacts. Default ADAPTIVE FM plan: Aurora A/B/C (101-51), Hull A/B/C (50-11), Last Vector B (10-6), A (5-3), C for the duel (+8 BPM). Last hit point muffles the mix (low-pass) and adds a heartbeat on the beat; chain >= 15 brings the arp forward. The SWITCH SOUNDTRACK key cycles ADAPTIVE FM or a single track.
+
+The game calls `audio.updateMusic({ remaining, duel, lowHealth, chain })` every frame and `audio.pauseMusic(paused)`. For one-off moments, use `audio.music` (the engine) directly:
+
+| Call | Effect |
+|---|---|
+| `queue({ track?, section?, at?, fade? })` | switch track and/or section on the next `"now"` (16th) / `"beat"` / `"bar"` (default) / `"section"` boundary; `fade` = crossfade seconds on a track change |
+| `play(track, { section?, loop? })` / `stop(fade?)` | start immediately / stop |
+| `pause()` / `resume()` | freeze and continue from the same step |
+| `setTempo(bpm \| null, ramp?)` / `setTempoOffset(delta, ramp?)` | absolute override / offset from each track's BPM, ramped in seconds |
+| `setChannel(id, { mute?, volume? }, fade?)` / `resetChannels()` | per-channel mix (`fm1 fm2 fm3 fm4 fm5 dac psg`), kept across track changes |
+| `setFilter(hz \| null, ramp?)` / `setVolume(v, ramp?)` | master low-pass (3390 = Model 1 Genesis) / volume |
+| `setLoopMode("section" \| "song")` | loop the current section (game default) or play A-B-C in order |
+| `on(type, fn, { ahead? })` | `beat` `bar` `section` `track` `loop` `stop` events; `ahead: true` fires ~120 ms early with the exact audio `time` for beat-locked SFX |
+| `state` / `bpm` / `beatPhase()` | audible track, section, bar, chord, tempo, channel settings |
+
+Song format: chords one per bar, melody as `NOTE-LENGTH` tokens in 16ths with `|` between bars, 16-char bass/drum/stab rows (see the header of `engine.ts`). Bars that don't add up to 16 steps throw at startup.
+`node music-test.mjs` (with `npm run serve`) checks cues, crossfades, tempo, channels, pause and events; `node music-preview.mjs` writes one full loop per track to music_preview/.
 
 ## Networking
 `src/net.ts` defines `Transport` + `NetEvent` (lobbyJoin/Leave/Countdown, matchStart, attack, state, hit, ko, matchEnd, disconnected).
@@ -61,6 +81,3 @@ The final duel CPU has 14 HP and regenerates; beat it with a sustained barrage (
 
 ## Visual FX
 CRT filter (V / Select), stage backgrounds (starfield -> nebula -> fortress -> red core), beat-pulsing palette shifts, palette-cycled borders, mini-boss cut-in banner, grid KO ripples, raster wobble on bombs, a meteor "1ST" on victory. G toggles low-FX mode (auto when fps drops).
-
-## Trance soundtracks (NEON TRANCE / STARLIGHT TRANCE)
-Pre-rendered with the offline Python synth (`tools/trance_game.py` + `music_styles/lib.py`), 8 seamless 16-bar loop sections each (same players-left thresholds as THUNDER BLITZ), Opus 96k in `assets/music/` (copied to `dist/music/` by `npm run build`). `src/audio/stream.ts` decodes, loops and crossfades one bar on section changes, lazy-loading the next section. `npm run build:single` embeds them base64 into STARFALL101.html. `node music-test.mjs` (server on :8080) checks section switching.

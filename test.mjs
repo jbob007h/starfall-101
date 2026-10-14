@@ -110,7 +110,7 @@ const m0 = await p.evaluate(() => ({ stage: window.__audio.tier, bpm: window.__a
 await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; let pl = 101; g.rivals.forEach((r, i) => { if (i >= 20 && i < 30) g.koRival(r, -1, i - 12, 0); else if (i >= 6 && r.alive) { r.alive = false; r.place = pl--; r.koBy = (i * 7) % 6; } }); });
 await p.waitForTimeout(2600);
 console.log("music stage before -> after field shrinks to 7:", m0, "->");
-console.log("music:", await p.evaluate(() => { const a = window.__audio; return { playing: a.playing, stage: a.tier, bpm: a.tempo, bar: a.seq && a.seq.bar }; }));
+console.log("music:", await p.evaluate(() => { const a = window.__audio; return { playing: a.playing, stage: a.tier, bpm: a.tempo, bar: a.music && a.music.state.bar, track: a.music && a.music.state.track, section: a.music && a.music.state.section }; }));
 await p.waitForTimeout(600);
 await p.screenshot({ path: "screenshot12.png" });
 await p.waitForTimeout(1500); await p.evaluate(() => { const g = window.__game; g.bomb(); });

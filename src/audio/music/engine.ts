@@ -1,0 +1,497 @@
+// FM chiptune engine (Sega Genesis / Mega Drive style) with a control API for dynamic, game-driven music.
+//
+// Voices: 2-operator FM per note (+ optional second parallel modulator, unison, delayed vibrato), slap bass,
+// DAC drums (kick/snare through an 8-bit-style quantiser) and PSG-style stepped noise (hats/crash).
+// Channel layout mirrors the YM2612 + SN76489: FM1 lead, FM2 lead echo, FM3 bass, FM4 arp, FM5 pad/guitar, FM6 DAC, PSG noise.
+//
+// Everything the game changes (track, section, tempo, channel mix, filter) is applied on musical boundaries
+// (next 16th / beat / bar / section) so changes never land mid-note. Works on any BaseAudioContext, so the
+// same engine renders WAV previews through OfflineAudioContext.
+
+export type ChannelId = "fm1" | "fm2" | "fm3" | "fm4" | "fm5" | "dac" | "psg";
+export const CHANNELS: { id: ChannelId; chip: string; role: string; pan: number; gain: number }[] = [
+  { id: "fm1", chip: "FM1", role: "Lead", pan: 0, gain: 0.5 },
+  { id: "fm2", chip: "FM2", role: "Echo", pan: -0.7, gain: 0.5 },
+  { id: "fm3", chip: "FM3", role: "Bass", pan: 0, gain: 0.75 },
+  { id: "fm4", chip: "FM4", role: "Arp", pan: 0.7, gain: 0.28 },
+  { id: "fm5", chip: "FM5", role: "Pad / Gtr", pan: 0.2, gain: 0.26 },
+  { id: "dac", chip: "FM6", role: "DAC drums", pan: 0, gain: 0.9 },
+  { id: "psg", chip: "PSG", role: "Noise", pan: 0, gain: 0.22 },
+];
+
+/** 2-op FM patch. index = modulation depth in multiples of the note frequency (decays to indexSus). */
+export interface FMPatch {
+  ratio: number; modType?: OscillatorType; index: number; indexSus: number; indexDecay: number;
+  ratio2?: number; mod2Type?: OscillatorType; index2?: number;
+  a: number; d: number; s: number; r: number; vol: number;
+  unison?: number; spread?: number; vib?: { depth: number; rate: number; delay: number };
+}
+
+export interface DrumBar { k: string; s: string; h: string; }
+export interface SectionDef {
+  id: string; name: string;
+  /** One chord per bar, e.g. "Em C D B" (qualities: "", m, dim, aug, sus4). */
+  chords: string;
+  /** Lead melody: NOTE-LENGTH tokens in 16th steps ("E5-6", rest "_-4"), "|" between bars (16 steps each). */
+  melody: string;
+  /** 16 chars per bar: r root, o octave, f fifth, . rest. */
+  bass: string;
+  harm: ("pad" | "arp" | "stab")[]; arp?: "up" | "updown";
+  /** Power-chord stab rhythm, 16 chars: x hit, . rest. */
+  stab?: string;
+  /** 16 chars each: k kick / s snare / h closed hat, o open hat. */
+  drums: DrumBar;
+  /** Overrides for the section's last bar (drum fill). */
+  fill?: Partial<DrumBar>;
+}
+export interface TrackDef {
+  id: string; title: string; stage: string; key: string; bpm: number;
+  patches: { lead: string; arp: string; pad: string; stab: string };
+  /** Semitones added to the lead melody. */
+  shift: number;
+  /** tanh drive on the lead + echo channels (0 = clean). */
+  drive: number;
+  echo: { steps: number; vol: number };
+  /** Per-track channel level multipliers. */
+  mix?: Partial<Record<ChannelId, number>>;
+  sections: SectionDef[];
+}
+
+// ---------------------------------------------------------------- compiler
+type Ev =
+  | { k: "fm"; ch: ChannelId; patch: string; midi: number; len: number; gate: number; vel: number }
+  | { k: "kick" | "snare" | "hat" | "ohat" | "crash"; ch: ChannelId; vel: number };
+export interface CompiledSection { id: string; name: string; L: number; bars: string[]; ev: Ev[][]; }
+export interface CompiledTrack { def: TrackDef; sections: CompiledSection[]; loopSteps: number; }
+
+const PC: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+export const midiName = (m: number) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+export function noteToMidi(n: string) {
+  const m = /^([A-G])([#b]?)(\d)$/.exec(n); if (!m) throw new Error("music: bad note " + n);
+  return 12 * (+m[3] + 1) + PC[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0);
+}
+const QUAL: Record<string, number[]> = { "": [0, 4, 7], m: [0, 3, 7], dim: [0, 3, 6], aug: [0, 4, 8], sus4: [0, 5, 7] };
+function parseChord(c: string) {
+  const m = /^([A-G])([#b]?)(m|dim|aug|sus4)?$/.exec(c); if (!m) throw new Error("music: bad chord " + c);
+  return { pc: (PC[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0) + 12) % 12, iv: QUAL[m[3] || ""], name: c };
+}
+
+/** Compile each section to its own looping step grid (16th notes). Throws on malformed bars so data bugs fail loudly. */
+export function compileTrack(tr: TrackDef): CompiledTrack {
+  const sections = tr.sections.map(sec => {
+    const chords = sec.chords.trim().split(/\s+/).map(parseChord), L = chords.length * 16;
+    const ev: Ev[][] = Array.from({ length: L }, () => []);
+    const add = (step: number, e: Ev) => ev[((step % L) + L) % L].push(e);
+    const mbars = sec.melody.split("|");
+    if (mbars.length !== chords.length) throw new Error(`music: ${tr.id}/${sec.id} has ${mbars.length} melody bars for ${chords.length} chords`);
+    let st = 0;
+    mbars.forEach((mb, i) => {
+      let sum = 0;
+      for (const tok of mb.trim().split(/\s+/)) {
+        const [n, len] = tok.split("-"), l = +len; sum += l;
+        if (n !== "_") {
+          const midi = noteToMidi(n) + tr.shift;
+          add(st, { k: "fm", ch: "fm1", patch: tr.patches.lead, midi, len: l, gate: 0.95, vel: 1 });
+          add(st + tr.echo.steps, { k: "fm", ch: "fm2", patch: tr.patches.lead, midi, len: l, gate: 0.95, vel: tr.echo.vol }); // fake echo
+        }
+        st += l;
+      }
+      if (sum !== 16) throw new Error(`music: ${tr.id}/${sec.id} bar ${i + 1} has ${sum} steps`);
+    });
+    let prevPad: { chord: string; evs: { len: number }[] } | null = null;
+    chords.forEach((ch, bi) => {
+      const b0 = bi * 16, last = bi === chords.length - 1, root = 36 + ch.pc;
+      for (let s = 0; s < 16; s++) {
+        const c = sec.bass[s]; if (!c || c === ".") continue;
+        add(b0 + s, { k: "fm", ch: "fm3", patch: "slap", midi: root + (c === "o" ? 12 : c === "f" ? 7 : 0), len: sec.bass[s + 1] === "." ? 2 : 1, gate: 0.85, vel: 1 });
+      }
+      if (sec.harm.includes("pad")) {
+        if (prevPad && prevPad.chord === ch.name) prevPad.evs.forEach(e => e.len += 16); // held across repeated chords
+        else {
+          const evs = ch.iv.map(iv => ({ k: "fm" as const, ch: "fm5" as ChannelId, patch: tr.patches.pad, midi: 48 + ch.pc + iv, len: 16, gate: 0.98, vel: 0.8 }));
+          evs.forEach(e => add(b0, e)); prevPad = { chord: ch.name, evs };
+        }
+      }
+      if (sec.harm.includes("arp")) {
+        const base = (ch.pc >= 7 ? 48 : 60) + ch.pc, tones = [0, ch.iv[1], ch.iv[2], 12];
+        const order = sec.arp === "updown" ? [0, 1, 2, 3, 2, 1] : [0, 1, 2, 3];
+        for (let s = 0; s < 16; s++) add(b0 + s, { k: "fm", ch: "fm4", patch: tr.patches.arp, midi: base + tones[order[(b0 + s) % order.length]], len: 1, gate: 0.9, vel: s % 4 === 0 ? 1 : 0.7 });
+      }
+      if (sec.harm.includes("stab") && sec.stab) {
+        const p = sec.stab, base = (ch.pc >= 7 ? 36 : 48) + ch.pc;
+        for (let s = 0; s < 16; s++) {
+          if (p[s] !== "x") continue;
+          let len = 1; while (len < 2 && s + len < 16 && p[s + len] === ".") len++;
+          for (const iv of [0, 7, 12]) add(b0 + s, { k: "fm", ch: "fm5", patch: tr.patches.stab, midi: base + iv, len, gate: 0.8, vel: 0.9 });
+        }
+      }
+      const d: DrumBar = { ...sec.drums, ...((last && sec.fill) || {}) };
+      for (let s = 0; s < 16; s++) {
+        if (d.k[s] === "k") add(b0 + s, { k: "kick", ch: "dac", vel: 1 });
+        if (d.s[s] === "s") add(b0 + s, { k: "snare", ch: "dac", vel: last && sec.fill?.s && s >= 8 ? 0.6 + 0.04 * (s - 8) : 1 });
+        if (d.h[s] === "h") add(b0 + s, { k: "hat", ch: "psg", vel: s % 4 === 0 ? 1 : 0.65 });
+        if (d.h[s] === "o") add(b0 + s, { k: "ohat", ch: "psg", vel: 0.9 });
+      }
+    });
+    add(0, { k: "crash", ch: "psg", vel: 1 });
+    return { id: sec.id, name: sec.name, L, bars: chords.map(c => c.name), ev };
+  });
+  return { def: tr, sections, loopSteps: sections.reduce((a, s) => a + s.L, 0) };
+}
+
+// ---------------------------------------------------------------- engine
+export type Boundary = "now" | "beat" | "bar" | "section";
+export type LoopMode = "section" | "song";
+export type MusicEventType = "beat" | "bar" | "section" | "track" | "loop" | "stop";
+export interface MusicEvent { type: MusicEventType; time: number; track: string; section: string; bar: number; beat: number; bpm: number; }
+export interface Cue {
+  /** Track id or index. Omit to stay on the current track. */
+  track?: string | number;
+  /** Section id ("A") or index. Omit = first section on a track change, current section otherwise. */
+  section?: string | number;
+  /** Musical boundary to switch on (default "bar"). */
+  at?: Boundary;
+  /** Crossfade seconds on a track change (0 = cut on the boundary, letting notes ring out). */
+  fade?: number;
+}
+export interface ChannelSettings { mute: boolean; volume: number; }
+export interface MusicState {
+  playing: boolean; paused: boolean; track: string; trackIndex: number; title: string;
+  section: string; sectionIndex: number; sectionName: string; bar: number; bars: number; chord: string;
+  bpm: number; loopMode: LoopMode; channels: Record<ChannelId, ChannelSettings>;
+}
+
+interface Deck {
+  ti: number; track: CompiledTrack; sec: number; step: number; next: number; endAt: number;
+  group: GainNode; level: Record<ChannelId, GainNode>; input: Record<ChannelId, AudioNode>;
+}
+interface Pending { ti: number; sec: number | null; at: Boundary; fade: number; }
+type Handler = (e: MusicEvent) => void;
+
+const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+const LOOKAHEAD = 0.12;
+
+export class MusicEngine {
+  readonly tracks: CompiledTrack[];
+  /** Post-mix volume (after the compressor). */
+  readonly volume: GainNode;
+  private mix: GainNode; private lpf: BiquadFilterNode; private comp: DynamicsCompressorNode;
+  private noise: AudioBuffer; private dacCurve: Float32Array; private driveCurves = new Map<number, Float32Array>();
+  private deck: Deck | null = null; private fading: Deck[] = []; private pending: Pending | null = null;
+  private bpmNow = 120; private bpmFrom = 120; private bpmTo = 120; private rampT0 = 0; private rampT1 = 0;
+  private tempoOverride: number | null = null; private tempoOffset = 0;
+  private chans = Object.fromEntries(CHANNELS.map(c => [c.id, { mute: false, volume: 1 }])) as Record<ChannelId, ChannelSettings>;
+  private handlers: { type: MusicEventType | "*"; fn: Handler; ahead: boolean }[] = [];
+  private evq: MusicEvent[] = [];
+  private heard: MusicEvent | null = null; private lastBeat: MusicEvent | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  loopMode: LoopMode = "section";
+  paused = false;
+  /** Set false to drive scheduling yourself with tick()/scheduleUntil() (offline rendering does this). */
+  autoTick: boolean;
+
+  constructor(readonly ctx: BaseAudioContext, dest: AudioNode, defs: TrackDef[], readonly patches: Record<string, FMPatch>) {
+    this.tracks = defs.map(compileTrack);
+    this.mix = ctx.createGain(); this.mix.gain.value = 0.55;
+    this.lpf = ctx.createBiquadFilter(); this.lpf.type = "lowpass"; this.lpf.frequency.value = 20000; this.lpf.Q.value = 0.5;
+    this.comp = ctx.createDynamicsCompressor();
+    this.comp.threshold.value = -14; this.comp.ratio.value = 3; this.comp.attack.value = 0.005; this.comp.release.value = 0.15;
+    this.volume = ctx.createGain(); this.volume.gain.value = 1;
+    this.mix.connect(this.lpf); this.lpf.connect(this.comp); this.comp.connect(this.volume); this.volume.connect(dest);
+    // PSG-ish stepped noise
+    const len = ctx.sampleRate; this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
+    const nd = this.noise.getChannelData(0); let v = 0; for (let i = 0; i < len; i++) { if (i % 2 === 0) v = Math.random() * 2 - 1; nd[i] = v; }
+    const n = 4096; this.dacCurve = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; this.dacCurve[i] = Math.round(Math.tanh(1.4 * x) * 40) / 40; }
+    this.autoTick = typeof window !== "undefined" && typeof OfflineAudioContext !== "undefined" && !(ctx instanceof OfflineAudioContext);
+  }
+
+  // ------------------------------------------------------------ queries
+  trackIndex(t: string | number) {
+    const i = typeof t === "number" ? t : this.tracks.findIndex(x => x.def.id === t);
+    if (i < 0 || i >= this.tracks.length) throw new Error("music: unknown track " + t); return i;
+  }
+  sectionIndex(ti: number, s: string | number) {
+    const secs = this.tracks[ti].sections, i = typeof s === "number" ? s : secs.findIndex(x => x.id === s);
+    if (i < 0 || i >= secs.length) throw new Error("music: unknown section " + s); return i;
+  }
+  get playing() { return !!this.deck; }
+  /** Current tempo (follows ramps). */
+  get bpm() { return this.bpmNow; }
+  /** What is audible right now (lags the scheduler by the lookahead). */
+  get state(): MusicState {
+    const h = this.heard, d = this.deck, ti = h ? this.trackIndex(h.track) : d?.ti ?? 0, tr = this.tracks[ti];
+    const si = h ? this.sectionIndex(ti, h.section) : d?.sec ?? 0, sec = tr.sections[si], bar = h?.bar ?? 0;
+    return {
+      playing: !!d, paused: this.paused, track: tr.def.id, trackIndex: ti, title: tr.def.title,
+      section: sec.id, sectionIndex: si, sectionName: sec.name, bar, bars: sec.L / 16, chord: sec.bars[bar] ?? "",
+      bpm: this.bpmNow, loopMode: this.loopMode, channels: structuredCloneChans(this.chans),
+    };
+  }
+  /** 0..1 position within the current beat (0 = on the beat) for beat-synced visuals; 0.5 when silent. */
+  beatPhase() {
+    const b = this.lastBeat; if (!b || !this.deck || this.paused) return 0.5;
+    const el = this.ctx.currentTime - b.time, dur = 60 / b.bpm; return el < 0 ? 0 : (el / dur) % 1;
+  }
+
+  // ------------------------------------------------------------ transport
+  /** Start (or restart) a track immediately. */
+  play(track: string | number, opts: { section?: string | number; loop?: LoopMode; at?: number } = {}) {
+    const ti = this.trackIndex(track), sec = opts.section === undefined ? 0 : this.sectionIndex(ti, opts.section);
+    if (opts.loop) this.loopMode = opts.loop;
+    this.stop(0.05, false);
+    this.paused = false; this.pending = null;
+    const t = opts.at ?? this.ctx.currentTime + 0.06;
+    this.resetTempo(ti);
+    this.deck = this.makeDeck(ti, sec, t);
+    this.startTimer(); this.tick();
+  }
+  /** Change track and/or section on the next musical boundary. Later cues replace earlier, not-yet-applied ones. */
+  queue(cue: Cue) {
+    if (!this.deck) { if (cue.track !== undefined) this.play(cue.track, { section: cue.section }); return; }
+    const ti = cue.track === undefined ? (this.pending?.ti ?? this.deck.ti) : this.trackIndex(cue.track);
+    const sec = cue.section === undefined ? null : this.sectionIndex(ti, cue.section);
+    this.pending = { ti, sec, at: cue.at ?? "bar", fade: cue.fade ?? 0 };
+  }
+  /** Is a queued cue still waiting for its boundary? */
+  get hasPending() { return !!this.pending; }
+  stop(fade = 0.08, emit = true) {
+    const t = this.ctx.currentTime;
+    for (const d of [this.deck, ...this.fading]) if (d) this.retire(d, t, fade);
+    const had = !!this.deck;
+    this.deck = null; this.fading = []; this.pending = null; this.paused = false; this.evq = []; this.heard = null; this.lastBeat = null;
+    this.stopTimer();
+    if (had && emit) this.emitNow("stop");
+  }
+  /** Freeze the song position and silence the music; resume() continues from the same step. */
+  pause() {
+    if (!this.deck || this.paused) return;
+    this.paused = true; const t = this.ctx.currentTime;
+    for (const d of [this.deck, ...this.fading]) { d.group.gain.cancelScheduledValues(t); d.group.gain.setTargetAtTime(0, t, 0.02); }
+    this.evq = this.evq.filter(e => e.time <= t);
+  }
+  resume() {
+    if (!this.deck || !this.paused) return;
+    this.paused = false; const t = this.ctx.currentTime + 0.05;
+    this.deck.next = t; this.deck.group.gain.cancelScheduledValues(t); this.deck.group.gain.setTargetAtTime(1, t, 0.02);
+    for (const d of this.fading) this.retire(d, t, 0.05);
+    this.fading = []; this.tick();
+  }
+  setPaused(p: boolean) { if (p) this.pause(); else this.resume(); }
+  /** "section" = loop the current section until told otherwise (game default); "song" = play sections in order. */
+  setLoopMode(m: LoopMode) { this.loopMode = m; }
+
+  // ------------------------------------------------------------ mix / tempo
+  /** Absolute tempo override (null = back to the track's tempo + offset). Ramps over `ramp` seconds. */
+  setTempo(bpm: number | null, ramp = 0) { this.tempoOverride = bpm; this.retarget(ramp); }
+  /** Tempo relative to each track's own BPM (e.g. +8 for the final duel). Kept across track changes. */
+  setTempoOffset(delta: number, ramp = 0) { this.tempoOffset = delta; this.retarget(ramp); }
+  /** Mute / set the level (0..1+) of one channel. Applies to every track and survives track changes. */
+  setChannel(id: ChannelId, s: Partial<ChannelSettings>, fade = 0.05) {
+    Object.assign(this.chans[id], s);
+    for (const d of [this.deck, ...this.fading]) if (d) this.applyLevel(d, id, fade);
+  }
+  setChannels(all: Partial<Record<ChannelId, Partial<ChannelSettings>>>, fade = 0.05) { for (const k in all) this.setChannel(k as ChannelId, all[k as ChannelId]!, fade); }
+  /** Unmute every channel at full level. */
+  resetChannels(fade = 0.05) { for (const c of CHANNELS) this.setChannel(c.id, { mute: false, volume: 1 }, fade); }
+  /** Master low-pass in Hz (null = open). 3390 Hz is the Model 1 Genesis headphone-out character. */
+  setFilter(hz: number | null, ramp = 0.05) { this.lpf.frequency.setTargetAtTime(hz ?? 20000, this.ctx.currentTime, Math.max(0.005, ramp / 3)); }
+  setVolume(v: number, ramp = 0.05) { this.volume.gain.setTargetAtTime(v, this.ctx.currentTime, Math.max(0.005, ramp / 3)); }
+
+  // ------------------------------------------------------------ events
+  /** Subscribe to beat/bar/section/track/loop/stop ("*" = all). Fires when the moment is heard;
+   *  with { ahead: true } it fires when scheduled (~120 ms early) with the exact AudioContext `time`,
+   *  so you can schedule your own sounds on the beat. Returns an unsubscribe function. */
+  on(type: MusicEventType | "*", fn: Handler, opts: { ahead?: boolean } = {}) {
+    const h = { type, fn, ahead: !!opts.ahead }; this.handlers.push(h);
+    return () => { this.handlers = this.handlers.filter(x => x !== h); };
+  }
+
+  // ------------------------------------------------------------ scheduling
+  /** Realtime pump: schedule ahead and dispatch heard events. Runs on its own timer when autoTick is on. */
+  tick() {
+    const now = this.ctx.currentTime;
+    this.scheduleUntil(now + LOOKAHEAD);
+    while (this.evq.length && this.evq[0].time <= now) this.dispatch(this.evq.shift()!, false);
+  }
+  /** Schedule all steps that start before `until` (AudioContext time). */
+  scheduleUntil(until: number) {
+    if (!this.deck || this.paused) return;
+    for (const d of this.fading) { while (d.next < Math.min(until, d.endAt)) this.stepDeck(d, false); }
+    this.fading = this.fading.filter(d => d.next < d.endAt);
+    while (this.deck && this.deck.next < until) {
+      this.applyPending(this.deck);
+      this.stepDeck(this.deck, true);
+    }
+  }
+
+  private stepDeck(d: Deck, main: boolean) {
+    const t = d.next;
+    if (main) this.advanceTempo(t);
+    const sec = d.track.sections[d.sec];
+    if (main && d.step % 4 === 0) {
+      const base = { time: t, track: d.track.def.id, section: sec.id, bar: Math.floor(d.step / 16), beat: (d.step / 4) % 4, bpm: this.bpmNow };
+      if (d.step === 0) this.emit({ ...base, type: "section" });
+      if (d.step % 16 === 0) this.emit({ ...base, type: "bar" });
+      this.emit({ ...base, type: "beat" });
+    }
+    for (const e of sec.ev[d.step]) this.playEv(d, e, t);
+    d.next += 60 / this.bpmNow / 4; d.step++;
+    if (d.step >= sec.L) {
+      d.step = 0;
+      if (this.loopMode === "song") { d.sec = (d.sec + 1) % d.track.sections.length; if (main && d.sec === 0) this.emitAt("loop", d, d.next); }
+      else if (main) this.emitAt("loop", d, d.next);
+    }
+  }
+  private applyPending(d: Deck) {
+    const p = this.pending; if (!p) return;
+    const ok = p.at === "now" || (p.at === "beat" && d.step % 4 === 0) || (p.at === "bar" && d.step % 16 === 0) || (p.at === "section" && d.step === 0);
+    if (!ok) return;
+    this.pending = null;
+    const t = d.next;
+    if (p.ti !== d.ti) {
+      const nd = this.makeDeck(p.ti, p.sec ?? 0, t, p.fade);
+      if (p.fade > 0) { d.endAt = t + p.fade; d.group.gain.setValueAtTime(1, t); d.group.gain.linearRampToValueAtTime(0, t + p.fade); this.fading.push(d); }
+      else this.retire(d, t, 0.15);
+      this.deck = nd; this.resetTempo(p.ti, t);
+      this.emitAt("track", nd, t);
+    } else if (p.sec !== null && (p.sec !== d.sec || d.step !== 0)) { d.sec = p.sec; d.step = 0; }
+  }
+  private makeDeck(ti: number, sec: number, t: number, fadeIn = 0): Deck {
+    const c = this.ctx, tr = this.tracks[ti], def = tr.def;
+    const group = c.createGain();
+    if (fadeIn > 0) { group.gain.setValueAtTime(0, t); group.gain.linearRampToValueAtTime(1, t + fadeIn); } else group.gain.value = 1;
+    group.connect(this.mix);
+    const level = {} as Record<ChannelId, GainNode>, input = {} as Record<ChannelId, AudioNode>;
+    for (const ch of CHANNELS) {
+      const g = c.createGain(); let node: AudioNode = g;
+      if (ch.id === "dac") { const sh = c.createWaveShaper(); sh.curve = this.dacCurve as Float32Array<ArrayBuffer>; node.connect(sh); node = sh; }
+      if (def.drive && (ch.id === "fm1" || ch.id === "fm2")) { const sh = c.createWaveShaper(); sh.curve = this.driveCurve(def.drive) as Float32Array<ArrayBuffer>; sh.oversample = "2x"; node.connect(sh); node = sh; }
+      const pan = c.createStereoPanner(); pan.pan.value = ch.pan; node.connect(pan); pan.connect(group);
+      level[ch.id] = g; input[ch.id] = g;
+    }
+    const d: Deck = { ti, track: tr, sec, step: 0, next: t, endAt: Infinity, group, level, input };
+    for (const ch of CHANNELS) this.applyLevel(d, ch.id, 0);
+    return d;
+  }
+  private retire(d: Deck, t: number, fade: number) {
+    d.endAt = Math.min(d.endAt, t);
+    try { d.group.gain.cancelScheduledValues(t); d.group.gain.setTargetAtTime(0, t, Math.max(0.005, fade / 3)); } catch { /* ignore */ }
+    const g = d.group;
+    if (this.autoTick) setTimeout(() => { try { g.disconnect(); } catch { /* ignore */ } }, (t - this.ctx.currentTime + fade + 3) * 1000);
+  }
+  private applyLevel(d: Deck, id: ChannelId, fade: number) {
+    const s = this.chans[id], base = CHANNELS.find(c => c.id === id)!.gain * (d.track.def.mix?.[id] ?? 1);
+    const v = s.mute ? 0 : base * s.volume, g = d.level[id].gain, t = this.ctx.currentTime;
+    if (fade <= 0) { g.cancelScheduledValues(t); g.setValueAtTime(v, t); } else g.setTargetAtTime(v, t, fade / 3);
+  }
+  private driveCurve(k: number) {
+    let c = this.driveCurves.get(k); if (c) return c;
+    const n = 1024; c = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; c[i] = Math.tanh(k * x) / Math.tanh(k); }
+    this.driveCurves.set(k, c); return c;
+  }
+
+  // tempo: linear ramp in time from bpmFrom to bpmTo over [rampT0, rampT1], sampled per 16th step
+  private targetBpm(ti: number) { return this.tempoOverride ?? this.tracks[ti].def.bpm + this.tempoOffset; }
+  private resetTempo(ti: number, t = this.ctx.currentTime) { this.bpmNow = this.bpmFrom = this.bpmTo = this.targetBpm(ti); this.rampT0 = this.rampT1 = t; }
+  private retarget(ramp: number) {
+    if (!this.deck) return;
+    const t = Math.max(this.ctx.currentTime, this.deck.next);
+    this.bpmFrom = this.bpmNow; this.bpmTo = this.targetBpm(this.deck.ti); this.rampT0 = t; this.rampT1 = t + Math.max(0, ramp);
+    if (ramp <= 0) this.bpmNow = this.bpmTo;
+  }
+  private advanceTempo(t: number) {
+    if (this.bpmNow === this.bpmTo) return;
+    const k = this.rampT1 <= this.rampT0 ? 1 : Math.min(1, Math.max(0, (t - this.rampT0) / (this.rampT1 - this.rampT0)));
+    this.bpmNow = this.bpmFrom + (this.bpmTo - this.bpmFrom) * k;
+  }
+
+  private emitAt(type: MusicEventType, d: Deck, t: number) {
+    const sec = d.track.sections[d.sec];
+    this.emit({ type, time: t, track: d.track.def.id, section: sec.id, bar: Math.floor(d.step / 16), beat: 0, bpm: this.bpmNow });
+  }
+  private emitNow(type: MusicEventType) {
+    this.dispatch({ type, time: this.ctx.currentTime, track: "", section: "", bar: 0, beat: 0, bpm: this.bpmNow }, false);
+  }
+  private emit(e: MusicEvent) {
+    this.dispatch(e, true);
+    this.evq.push(e);
+  }
+  private dispatch(e: MusicEvent, ahead: boolean) {
+    if (!ahead) { if (e.type === "beat") this.lastBeat = e; if (e.type === "bar") this.heard = e; }
+    for (const h of this.handlers) if (h.ahead === ahead && (h.type === "*" || h.type === e.type)) { try { h.fn(e); } catch (err) { console.error(err); } }
+  }
+  private startTimer() { if (this.autoTick && !this.timer) this.timer = setInterval(() => this.tick(), 25); }
+  private stopTimer() { if (this.timer) { clearInterval(this.timer); this.timer = null; } }
+
+  // ------------------------------------------------------------ voices
+  private playEv(d: Deck, e: Ev, t: number) {
+    const bus = d.input[e.ch];
+    switch (e.k) {
+      case "fm": { const p = this.patches[e.patch]; if (p) this.fm(bus, t, e.midi, e.len * (60 / this.bpmNow / 4) * e.gate, p, e.vel); break; }
+      case "kick": this.kick(bus, t, e.vel); break;
+      case "snare": this.snare(bus, t, e.vel); break;
+      case "hat": this.hat(bus, t, e.vel, false); break;
+      case "ohat": this.hat(bus, t, e.vel, true); break;
+      case "crash": this.crash(bus, t, e.vel); break;
+    }
+  }
+  private osc(type: OscillatorType = "sine", f = 0) { const o = this.ctx.createOscillator(); o.type = type; if (f) o.frequency.value = f; return o; }
+  private fm(bus: AudioNode, t: number, midi: number, dur: number, P: FMPatch, vel: number) {
+    const c = this.ctx, f = mtof(midi), u = P.unison || 1;
+    dur = Math.max(dur, P.a + 0.02);
+    const end = t + dur, stopAt = end + P.r * 6 + 0.02, pk = vel * P.vol / Math.sqrt(u);
+    const out = c.createGain();
+    out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(pk, t + P.a);
+    out.gain.setTargetAtTime(pk * P.s, t + P.a, P.d); out.gain.setTargetAtTime(0, end, P.r);
+    out.connect(bus);
+    const nodes: OscillatorNode[] = [];
+    const mod = this.osc(P.modType, f * P.ratio), mg = c.createGain();
+    mg.gain.setValueAtTime(P.index * f, t); mg.gain.setTargetAtTime(P.indexSus * f, t, P.indexDecay);
+    mod.connect(mg); nodes.push(mod);
+    let mg2: GainNode | null = null;
+    if (P.ratio2) {
+      const m2 = this.osc(P.mod2Type, f * P.ratio2); mg2 = c.createGain();
+      mg2.gain.setValueAtTime((P.index2 ?? 0) * f, t); mg2.gain.setTargetAtTime((P.index2 ?? 0) * f * 0.3, t, P.indexDecay * 2);
+      m2.connect(mg2); nodes.push(m2);
+    }
+    let lg: GainNode | null = null;
+    if (P.vib && dur > P.vib.delay) {
+      const lfo = this.osc("sine", P.vib.rate); lg = c.createGain();
+      lg.gain.setValueAtTime(0, t); lg.gain.setValueAtTime(0, t + P.vib.delay); lg.gain.linearRampToValueAtTime(P.vib.depth, t + P.vib.delay + 0.25);
+      lfo.connect(lg); nodes.push(lfo);
+    }
+    for (let i = 0; i < u; i++) {
+      const car = this.osc("sine", f);
+      if (u > 1) car.detune.value = (i - (u - 1) / 2) * (P.spread || 0);
+      mg.connect(car.frequency); if (mg2) mg2.connect(car.frequency); if (lg) lg.connect(car.detune);
+      car.connect(out); nodes.push(car);
+    }
+    for (const n of nodes) { n.start(t); n.stop(stopAt); }
+    nodes[nodes.length - 1].onended = () => { try { out.disconnect(); } catch { /* ignore */ } };
+  }
+  private noiseSrc(t: number, dur: number) { const s = this.ctx.createBufferSource(); s.buffer = this.noise; s.start(t, Math.random() * 0.8); s.stop(t + dur); return s; }
+  private decay(t: number, v: number, dur: number) { const g = this.ctx.createGain(); g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); return g; }
+  private filt(type: BiquadFilterType, f: number, q?: number) { const b = this.ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; if (q) b.Q.value = q; return b; }
+  private kick(bus: AudioNode, t: number, v: number) {
+    const o = this.osc("sine"); o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.11);
+    const g = this.decay(t, v, 0.3); o.connect(g); g.connect(bus); o.start(t); o.stop(t + 0.32);
+    const n = this.noiseSrc(t, 0.015), hp = this.filt("highpass", 2000), g2 = this.decay(t, 0.3 * v, 0.012); n.connect(hp); hp.connect(g2); g2.connect(bus);
+  }
+  private snare(bus: AudioNode, t: number, v: number) {
+    const n = this.noiseSrc(t, 0.2), bp = this.filt("bandpass", 2000, 0.7), g = this.decay(t, 0.9 * v, 0.18); n.connect(bp); bp.connect(g); g.connect(bus);
+    const o = this.osc("triangle"); o.frequency.setValueAtTime(200, t); o.frequency.exponentialRampToValueAtTime(140, t + 0.08);
+    const g2 = this.decay(t, 0.5 * v, 0.09); o.connect(g2); g2.connect(bus); o.start(t); o.stop(t + 0.1);
+  }
+  private hat(bus: AudioNode, t: number, v: number, open: boolean) {
+    const d = open ? 0.16 : 0.035, n = this.noiseSrc(t, d + 0.02), hp = this.filt("highpass", 7000), g = this.decay(t, 0.6 * v, d);
+    n.connect(hp); hp.connect(g); g.connect(bus);
+  }
+  private crash(bus: AudioNode, t: number, v: number) {
+    const n = this.noiseSrc(t, 1.35), hp = this.filt("highpass", 4200), g = this.decay(t, 0.5 * v, 1.3);
+    n.connect(hp); hp.connect(g); g.connect(bus);
+  }
+}
+function structuredCloneChans(c: Record<ChannelId, ChannelSettings>) {
+  const o = {} as Record<ChannelId, ChannelSettings>; for (const k in c) o[k as ChannelId] = { ...c[k as ChannelId] }; return o;
+}
