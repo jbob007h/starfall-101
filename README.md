@@ -23,7 +23,7 @@ Tests: `node test.mjs` (single player + stubbed gamepad, needs `npm run serve` o
 | Bomb | X | B |
 | Targeting | 1 Random, 2 KOs, 3 Attackers, 4 Badges | Right-stick flick: up / right / down / left |
 | Start / vote start in lobby / pause / restart | Enter, P, R | Start |
-Dots: +10 points and faster health regen (no bombs). Power-ups: W weapon, B bomb (max 5; picking one up at 5 = free TRIPLE BOMB that keeps your chain), F chain freeze, S shield, L lightning (5s auto chain-lightning).
+Dots: +10 points and faster health regen (no bombs). Start with 3 bombs. Power-up drop weights (6% per kill): W 28%, B 18%, S 18%, F 18%, L 18%. Power-ups: W weapon, B bomb (max 5; picking one up at 5 = free TRIPLE BOMB that keeps your chain), F chain freeze, S shield, L lightning (5s auto chain-lightning).
 Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHANTOM (hit when the eye opens); the design id travels with the attack (`variant`) online.
 Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 40 (mini-boss); bullet wave tier starts at chain 15.
 

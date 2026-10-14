@@ -32,8 +32,8 @@ In-run drops:
 - Chain freeze: pauses the streak timer for a few seconds.
 - Shield: blocks one hit or one incoming attack.
 - Lightning: for 5s the ship auto-fires chain-lightning every 0.25s at the nearest enemy, jumping to 2 more (works without holding fire; kills count toward chains). Timer shown in the bottom strip.
-- Bomb stock is capped at 5. Picking up a Bomb power-up at 5 bombs triggers a TRIPLE BOMB instead: three rapid staggered screen-clearing blasts (~3x bomb damage to mini-bosses), costs no held bombs, and does NOT reset the chain (it refreshes the chain timer) as a reward. Its kills don't add to the chain.
-- Drop rate: each normal kill has a 6% chance to drop a power-up; type is a weighted pick: Weapon Up 30%, Bomb 13%, Shield 19%, Chain Freeze 19%, Lightning 19%. (Mini-boss kills always drop one random power-up.)
+- The player starts each match with 3 bombs. Bomb stock is capped at 5. Picking up a Bomb power-up at 5 bombs triggers a TRIPLE BOMB instead: three rapid staggered screen-clearing blasts (~3x bomb damage to mini-bosses), costs no held bombs, and does NOT reset the chain (it refreshes the chain timer) as a reward. Its kills don't add to the chain.
+- Drop rate: each normal kill has a 6% chance to drop a power-up; type is a weighted pick: Weapon Up 28%, Bomb 18%, Shield 18%, Chain Freeze 18%, Lightning 18%. (Mini-boss kills always drop one random power-up.)
 
 Regular enemies (formation and sent) are 11px-wide pixel sprites with matching ~7x6 hitboxes (20% larger than v1).
 

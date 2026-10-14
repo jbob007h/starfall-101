@@ -47,7 +47,7 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const ri = (a: number, b: number) => Math.floor(rnd(a, b + 1));
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** Power-up type weights for the 6% per-kill drop (must sum to 100). */
-const POWERUP_WEIGHTS: [string, number][] = [["W", 30], ["B", 13], ["S", 19], ["F", 19], ["L", 19]];
+const POWERUP_WEIGHTS: [string, number][] = [["W", 28], ["B", 18], ["S", 18], ["F", 18], ["L", 18]];
 function pickPowerup() { let r = Math.random() * 100; for (const [k, w] of POWERUP_WEIGHTS) { if ((r -= w) < 0) return k; } return "W"; }
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 
@@ -124,7 +124,7 @@ class Game {
   rivals: Rival[] = []; enemies: Enemy[] = []; forms: Formation[] = []; pb: Bullet[] = []; eb: Bullet[] = [];
   items: Item[] = []; parts: Part[] = []; uiParts: Part[] = []; projs: Proj[] = []; popups: Popup[] = []; warns: Warn[] = []; waves: Wave[] = [];
   bgStars: { x: number; y: number; z: number }[] = []; streaks: { x: number; y: number; vx: number; vy: number; life: number; col: string; big: boolean }[] = [];
-  px = PW / 2; py = PH - 40; hp = 3; inv = 0; regen = 20; weapon = 0; shield = false; bombs = 2; dots = 0; fireCd = 0; focus = false;
+  px = PW / 2; py = PH - 40; hp = 3; inv = 0; regen = 20; weapon = 0; shield = false; bombs = 3; dots = 0; fireCd = 0; focus = false;
   score = 0; badges = 0; starBoost = 0; kos = 0; place = 0; mode = 0; targets: number[] = []; randTarget = -1; randCd = 0;
   chain = 0; chainCol = -1; chainT = 0; chainMax = 2.6; eligible = false; freeze = 0; chainPulse = 0; grazes = 0; bestChain = 0;
   formCd = 2; formId = 0; shake = 0; hitstop = 0; slow = 0; flash = 0; flashCol = WHT; duel = false; dead = false; endT = 0; paused = false;
@@ -133,7 +133,7 @@ class Game {
 
   reset(players: PlayerInfo[]) {
     Object.assign(this, { time: 0, enemies: [], forms: [], pb: [], eb: [], items: [], parts: [], uiParts: [], projs: [], popups: [], warns: [], waves: [], streaks: [],
-      px: PW / 2, py: PH - 40, hp: 3, inv: 2, regen: 20, weapon: 0, shield: false, bombs: 2, dots: 0, score: 0, badges: 0, starBoost: 0, kos: 0, place: 0,
+      px: PW / 2, py: PH - 40, hp: 3, inv: 2, regen: 20, weapon: 0, shield: false, bombs: 3, dots: 0, score: 0, badges: 0, starBoost: 0, kos: 0, place: 0,
       zapT: 0, zapCd: 0, bolts: [], tripleQ: [], bombAt: null, chain: 0, chainCol: -1, chainT: 0, eligible: false, freeze: 0, grazes: 0, bestChain: 0, formCd: 2, shake: 0, hitstop: 0, slow: 0, duel: false, dead: false, randTarget: -1, randCd: 0, endT: 0, bombFx: 0 });
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
