@@ -45,3 +45,6 @@ Notes: free instances sleep after ~15 min idle (first load takes ~30-60s to wake
 
 ## Pacing & enemy upgrades
 CPU players drop faster (top 20 at ~4:00, top 10 at ~5:00, duel at ~6:35). From 1:00, formation enemies are gradually replaced by armored (3 HP) and later spiked (5 HP) variants that keep their chain colour, flash/chip when hit and give more score and dots. Details in PLAN.md.
+
+## Final duel & mini-bosses
+The last CPU in the duel is tougher (6 HP, slow regen, little random attrition): beat it with your attacks (~75 s if passive). CPUs send mini-bosses roughly every 60-90 s from 2:00 and every 30-45 s in the final 10; at most 2 mini-bosses are active at once, extras queue.

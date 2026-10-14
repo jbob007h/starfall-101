@@ -19,8 +19,9 @@ export function pickBossVariant(power: number, time: number) {
   const unlocked = Math.min(BOSS_VARIANTS, 2 + (time > 120 || power >= 50 ? 1 : 0) + (time > 200 || power >= 60 ? 1 : 0));
   return Math.random() < 0.4 ? unlocked - 1 : Math.floor(Math.random() * unlocked);
 }
+export const DUEL_HP = 6;
 export class MatchSim {
-  slots: Slot[]; time = 0; over = false;
+  slots: Slot[]; time = 0; over = false; duelT = -1; bossCd: Record<number, number> = {};
   /** players: in slot order. ai=true slots are driven by this sim (bots, or simulated humans offline). */
   constructor(players: { name: string; isBot: boolean; ai: boolean }[], private out: MatchOut) {
     this.slots = players.map((p, i) => ({ id: i, name: p.name, isBot: p.isBot, ai: p.ai, alive: true, hp: 3, badges: 0, skill: p.isBot ? rnd(0.3, 0.9) : rnd(0.5, 1),
@@ -57,21 +58,44 @@ export class MatchSim {
    *  top 20 at 4:00, top 10 at 5:00, then the final 10 linger for the boss music; duel (2) by ~6:40. */
   static PACE: [number, number][] = [[0, 101], [55, 101], [120, 60], [180, 35], [240, 19], [300, 9], [345, 6], [400, 2], [480, 1]];
   private aliveTarget() { const K = MatchSim.PACE, t = this.time; for (let i = 1; i < K.length; i++) if (t <= K[i][0]) { const [t0, a] = K[i - 1], [t1, b] = K[i]; return Math.round(a + (b - a) * (t - t0) / (t1 - t0)); } return 1; }
+  /** Final duel: the last CPU has DUEL_HP, regenerates slowly and only takes light "attrition" damage,
+   *  so its survival depends mainly on the attacks the human sends (~60-90 s if you play passively). */
+  private duelTick(dt: number, al: Slot[]) {
+    const b = al.find(x => x.ai); if (!b) return;
+    b.regen += dt; if (b.regen > 40 && b.hp < DUEL_HP) { b.hp++; b.regen = 0; }
+    if (this.time - this.duelT > 20 && Math.random() < dt / 9) this.damage(b, 1, -2);
+  }
+  /** Mini-boss attacks on each human: none before 2:00 / calm; every ~60-90 s mid-game, ~30-45 s in the final 10 / duel. */
+  private bossScheduler(dt: number, humans: Slot[], n: number) {
+    for (const h of humans) {
+      if (this.bossCd[h.id] === undefined) this.bossCd[h.id] = rnd(0, 30);
+      if (this.calm() || this.time < 120) continue;
+      this.bossCd[h.id] -= dt; if (this.bossCd[h.id] > 0) continue;
+      this.bossCd[h.id] = n <= 10 ? rnd(30, 45) : n <= 25 ? rnd(45, 65) : rnd(60, 90);
+      const bots = this.alive().filter(x => x.ai), s = bots.find(x => x.target === h.id) ?? pick(bots); if (!s) continue;
+      const pw = 40 + Math.floor(rnd(0, 12) * s.skill) + s.badges + (n <= 10 ? 8 : 0);
+      this.out.attack(s.id, h.id, 2, pw, pickBossVariant(pw, this.time));
+    }
+  }
   tick(dt: number) {
     if (this.over) return;
     this.time += dt;
-    const excess = this.alive().length - this.aliveTarget();
+    const al0 = this.alive(), duel = al0.length <= 2 && al0.some(x => !x.ai);
+    if (duel && this.duelT < 0) { this.duelT = this.time; for (const b of al0) if (b.ai) { b.hp = DUEL_HP; b.regen = 0; } } // final CPU powers up
+    if (duel) { this.duelTick(dt, al0); if (this.over) return; }
+    const excess = duel ? 0 : this.alive().length - this.aliveTarget();
     const rate = (this.calm() ? 0.15 : 0.5) + Math.max(0, excess) * 0.9; // abstract AI-vs-AI fights
-    let acc = rate * dt;
+    let acc = duel ? 0 : rate * dt;
     while (Math.random() < acc && !this.over) {
       acc -= 1; const v = pick(this.alive().filter(s => s.ai)); if (!v) break; if (excess <= 0 && v.hp <= 1) continue;
       const killer = pick(this.alive().filter(r => r !== v && r.ai)); this.damage(v, 1, killer ? killer.id : -2);
     }
     if (this.over) return;
     const al = this.alive(), n = al.length, humans = al.filter(s => !s.ai), ramp = this.ramp(), calm = this.calm();
+    this.bossScheduler(dt, humans, n);
     for (const b of this.slots) {
       if (!b.alive || !b.ai) continue;
-      if (b.hp < 3) { b.regen += dt; if (b.regen > 20) { b.hp++; b.regen = 0; } }
+      if (!duel && b.hp < 3) { b.regen += dt; if (b.regen > 20) { b.hp++; b.regen = 0; } }
       b.retarget -= dt;
       const tgt = this.slots[b.target];
       if (b.retarget <= 0 || (tgt && !tgt.alive)) {
@@ -85,7 +109,7 @@ export class MatchSim {
         if (b.sendCd <= 0 && this.time > 25) {
           b.sendCd = rnd(14, 26) / Math.sqrt(ramp) * (n <= 2 ? 0.5 : 1);
           let tier: Tier = 0; const pw = (calm ? 3 : 4) + Math.floor(rnd(0, 10) * b.skill * ramp) + b.badges;
-          if (!calm) { const roll = Math.random() * b.skill * ramp; tier = roll > 1.1 ? 2 : roll > 0.55 ? 1 : 0; }
+          if (!calm) { const roll = Math.random() * b.skill * ramp; tier = roll > 0.55 ? 1 : 0; } // mini-bosses come from the boss scheduler below
           // bot attack power respects the tier thresholds (wave 15+, mini-boss 40+)
           const p2 = calm ? Math.min(pw, 5) : Math.max(pw, [0, 15, 40][tier]); this.out.attack(b.id, t.id, tier, p2, pickBossVariant(p2, this.time));
         }

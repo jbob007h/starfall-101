@@ -126,3 +126,8 @@ Juice:
 ## Pacing & enemy upgrades (v7)
 - CPU elimination curve (src/sim.ts `MatchSim.PACE`, offline + server): protected until 0:55, then ~60 left at 2:00, ~35 at 3:00, ~20 at 4:00, ~10 at 5:00, final 10 linger (6 at 5:45) so the boss music gets its moment, duel (2 left) at ~6:35. Fast-forward sim: 1m 101, 2m ~62, 3m ~37, 4m ~20, 5m ~10, 6m 5, duel ~393 s.
 - Upgraded formation enemies from 1:00: tier-1 "armored" (steel plating, 3 HP) share rises 20% -> 85% by 4:00; tier-2 "spiked" (spikes + plating, 5 HP) takes over from 4:00 (up to ~60% of upgrades by 6:30). Same body colour for chaining; white hit-flash + plating chips on non-lethal hits; score x2/x3 and +1/+2 dots. Chains, formation clears, bombs and Lightning (2 dmg per bolt) work normally. Sent enemies unchanged (2 HP).
+
+## Final duel & CPU mini-bosses (v8)
+- Final duel (you + 1 CPU): the last CPU powers up to 6 HP, regenerates 1 HP / 40 s, background AI-vs-AI attrition is off; only light attrition (~1 dmg / 9 s, after a 20 s grace) applies, so its survival mainly depends on the attacks you send (rush 1 / wave 2 / boss 3 dmg, +1 at power 50+). Passive-play duel: ~76 s average (was ~47 s).
+- CPU mini-bosses come from a per-human scheduler (sim): none before 2:00 or during the calm opening; then one every 60-90 s (>25 left), 45-65 s (11-25 left), 30-45 s (final 10 / duel). Regular bot sends are rush/wave only. Client caps active mini-bosses at 2; extra incoming bosses wait (warning keeps flashing) until one is destroyed.
+- Measured (100 fast-forward sims): incoming mini-bosses per match 0-2m 0 / 2-4m 2.0 / 4-5m ~1.0 / 5m+ ~4.2 (before: 0 / 0.33 / 0.5 / 3.2, sometimes 5 within 25 s).

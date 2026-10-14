@@ -595,8 +595,11 @@ class Game {
     this.waves = this.waves.filter(w => w.t < w.dur);
   }
   updateWarns(dt: number) {
+    const MAX_BOSSES = 2;
     for (const w of this.warns) {
       w.t -= dt;
+      // cap simultaneous incoming mini-bosses: extra ones wait (warning keeps flashing) until one is down
+      if (w.t <= 0 && w.tier === 2 && this.enemies.filter(e => e.boss && !e.dead).length >= MAX_BOSSES) { w.t = 0.5; continue; }
       if (w.t <= 0) {
         this.flash = 0.12; this.flashCol = SENT_COL; this.shake = Math.max(this.shake, 3);
         if (w.tier === 0) { this.spawnFormation(clamp(3 + Math.floor(w.power / 5), 3, 10), SENT, ri(0, 3), true, w.sender); }
