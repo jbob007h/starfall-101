@@ -1,6 +1,7 @@
 import { drawText, textWidth } from "./font";
 import { Audio, renderMusicPreview } from "./audio";
 import { DUEL_HP } from "./sim";
+import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport } from "./net";
 import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_UP1, BUG_UP2, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
 
@@ -36,6 +37,7 @@ function fit() {
 function present() {
   mctx.imageSmoothingEnabled = false; mctx.drawImage(canvas, 0, 0, mid.width, mid.height); // crisp integer upscale
   dctx.fillStyle = "#000"; dctx.fillRect(0, 0, display.width, display.height); // letterbox
+  if (fxCfg.crt) { presentCRT(dctx, mid, view.x, view.y, view.w, view.h, H); return; }
   dctx.imageSmoothingEnabled = view.k !== view.scale; dctx.imageSmoothingQuality = "high"; // slight final fit only
   dctx.drawImage(mid, view.x, view.y, view.w, view.h);
 }
@@ -71,6 +73,12 @@ export function upgradeTier(t: number) {
 const UP_HP = [1, 3, 5];
 const bossSpr = makeSprite(BOSS, { x: SENT_COL, w: "#ffd0d0", k: "#400010", y: YEL });
 const badgeSpr = makeSprite(BADGE, { y: YEL, w: WHT });
+// stage backgrounds (generated once)
+const nebTile = nebulaTile(272, 400), fortFar = fortressTile(272, 420, false), fortNear = fortressTile(272, 384, true), coreT = coreTile(272, 420);
+const BG_TARGET = [[1, 0, 0, 0, 0], [0.4, 1, 0, 0, 0], [0, 0.7, 1, 0, 0], [0, 0.25, 1, 1, 0], [0, 0, 0, 0.55, 1]]; // [band, nebula, fortress far, fortress near, core]
+const PILOT = ["....mmmmmm....", "..mmmmmmmmmm..", ".mmwmmmmmmmmm.", ".mmccccccccmm.", "mmcwwcccccccmm", "mmccwccccccdmm", "mmccccccccddmm", ".mmccccccddmm.",
+  ".mmmmmmmmmmmm.", "..mkkkyykkkm..", "..mkkkkkkkkm..", "...mmmmmmmm...", "..dmmmmmmmmd..", ".ddddmmmmdddd."];
+const pilotSpr = makeSprite(PILOT, { m: MAG, w: WHT, c: CYA, d: "#601060", k: "#200828", y: YEL });
 const BOSS_NAMES = ["SAUCER", "SERPENT", "FORTRESS", "PHANTOM"];
 const serpHeadSpr = makeSprite(SERP_HEAD, { x: CYA, w: WHT, k: "#002030", y: YEL });
 const serpSegSpr = makeSprite(SERP_SEG, { x: CYA, m: MAG, w: WHT });
@@ -162,6 +170,10 @@ class Game {
   setNet(t: Transport) { this.net = t; t.on(e => { if (this.net === t) this.onNet(e); }); } lobbyLog: string[] = []; lobbyCount = 0; lobbyCd = -1; lastAttacker = -2; lobbyHumans = 0; lobbyVoted = false;
   bindNet() { this.setNet(this.net); }
   // ---------- pilot name entry (keyboard typing + controller letter picker) ----------
+  bgW = [1, 0, 0, 0, 0]; ripples: { x: number; y: number; t: number; gold: boolean }[] = []; cutIn: { t: number; name: string } | null = null; warpT = 0;
+  winStars: { x: number; y: number; sx: number; sy: number; at: number; col: string }[] = []; winT = 0; coreGrad: CanvasGradient | null = null;
+  get vStage() { const r = this.remaining; return this.duel ? 4 : r > 75 ? 0 : r > 50 ? 1 : r > 25 ? 2 : r > 10 ? 3 : 4; }
+  pal(col?: string) { const p = STAGE_PAL[this.state === "play" || this.state === "over" || this.state === "win" ? this.vStage : 1]; return col ? [col, p[0], p[1], col, p[2], p[3], col, p[4]] : p; }
   nameBuf: string[] = []; namePos = 0; myKos = 0; myKoBy = -2; lbScroll = 0; lbRep = 0;
   openName() { typed.length = 0; this.state = "name"; this.nameBuf = this.name.split("").slice(0, 10); this.namePos = this.nameBuf.length; audio.init(); }
   updateName() {
@@ -271,6 +283,10 @@ class Game {
   // ---------- main update ----------
   update(dt: number) {
     this.realT += dt; this.titleT += dt; this.padMsgT -= dt;
+    if (this.state !== "name") {
+      if (hit("KeyV", "PadSelect")) { fxCfg.crt = !fxCfg.crt; saveFx(); this.padMsg = "CRT FILTER " + (fxCfg.crt ? "ON" : "OFF"); this.padMsgT = 1.5; }
+      if (hit("KeyG")) { fxCfg.low = !fxCfg.low; saveFx(); this.padMsg = "LOW FX " + (fxCfg.low ? "ON" : "OFF"); this.padMsgT = 1.5; }
+    }
     if (this.state !== "play") {
       this.updateFx(dt);
       if (this.state === "lobby") { this.net.tick(dt, this.hints()); if (this.lobbyCd > 0) this.lobbyCd -= dt; if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } }
@@ -382,6 +398,7 @@ class Game {
     const tn = this.targets.length > 1 ? this.targets.length + " ATTACKERS" : (this.rivals[this.targets[0]]?.name || "?");
     this.popup(name, PW / 2, PH / 2 - 40, [CYA, MAG, YEL][tier], 2); this.popup("POWER " + power + " TO " + tn, PW / 2, PH / 2 - 26, WHT, 1);
     for (const id of this.targets) { this.net.sendAttack(id, tier as 0 | 1 | 2, power); const cp = this.cellPos(id); this.projs.push({ sx: PX + this.px, sy: PY + this.py, ex: cp.x + CELL_W / 2, ey: cp.y + CELL_H / 2, t: 0, dur: 0.7, out: true, tier, power, target: id, sender: -1, col: [CYA, MAG, YEL][tier] }); }
+    if (tier === 2) this.cutIn = { t: 0, name: tn }; // portrait banner, no pause
     this.score += power * 500; audio.sent(tier); this.flash = 0.15; this.flashCol = [CYA, MAG, YEL][tier];
     this.burst(this.px, this.py, YEL, 30, 140);
     this.chain = 0; this.chainCol = -1; this.chainT = 0; this.eligible = false; this.starBoost = 0;
@@ -688,12 +705,12 @@ class Game {
     if (this.state === "play" && !this.dead) {
       if (this.time % 0.25 < dt) this.net.sendState(this.hp, this.badges, this.targets, this.eligible);
     }
-    if (!this.duel && this.aliveAI === 1 && !this.dead) { this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.flash = 0.4; this.flashCol = YEL; }
-    if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.stopMusic(); audio.cashIn(2); }
+    if (!this.duel && this.aliveAI === 1 && !this.dead) { this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.warpT = 1.4; this.flash = 0.4; this.flashCol = YEL; }
+    if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.buildWinStars(); this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.stopMusic(); audio.cashIn(2); }
   }
   koRival(v: Rival, killer: number, place: number, badges: number) {
     v.alive = false; v.hp = 0; v.place = place; v.koT = 0; v.badges = badges; v.koBy = killer; if (killer === -1) this.myKos++;
-    const cp = this.cellPos(v.id);
+    const cp = this.cellPos(v.id); if (this.ripples.length < 12) this.ripples.push({ x: cp.x + CELL_W / 2, y: cp.y + CELL_H / 2, t: 0, gold: killer === -1 });
     for (let i = 0; i < 26; i++) { const a = Math.random() * 6.283, s = rnd(20, 90); this.uiParts.push({ x: cp.x + rnd(0, CELL_W), y: cp.y + rnd(0, CELL_H), vx: Math.cos(a) * s, vy: Math.sin(a) * s - 30, life: rnd(0.5, 1), max: 1, col: pick([COLORS[v.col], WHT, "#6040a0"]), s: ri(1, 3), g: 160 }); }
     this.kos++;
     // background starfall streak for every KO
@@ -734,6 +751,10 @@ class Game {
     this.parts = this.parts.filter(p => p.life > 0); this.uiParts = this.uiParts.filter(p => p.life > 0);
     if (this.parts.length > 1500) this.parts.splice(0, this.parts.length - 1500);
     for (const p of this.popups) p.t += dt; this.popups = this.popups.filter(p => p.t < 1.3);
+    for (let i = 0; i < 5; i++) this.bgW[i] += (BG_TARGET[this.vStage][i] - this.bgW[i]) * Math.min(1, dt * 0.6);
+    for (const q of this.ripples) q.t += dt; this.ripples = this.ripples.filter(q => q.t < 1.2);
+    if (this.cutIn) { this.cutIn.t += dt; if (this.cutIn.t > 0.9) this.cutIn = null; }
+    this.warpT = Math.max(0, this.warpT - dt); this.winT += dt;
     this.shake = Math.max(0, this.shake - dt * 30); this.flash = Math.max(0, this.flash - dt); this.bombFx = Math.max(0, this.bombFx - dt);
     for (const s of this.bgStars) { s.y += s.z * 30 * dt * (this.state === "play" ? Math.sqrt(this.ramp) : 1); if (s.y > PH) { s.y = 0; s.x = Math.random() * PW; } }
     // starfall sky density grows with KOs; meteor shower in the final duel
@@ -754,6 +775,11 @@ class Game {
     this.renderPanels();
     ctx.setTransform(1, 0, 0, 1, sx, sy);
     this.renderField();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const amp = Math.max(this.bombFx / 0.6 * 7, this.tripleQ.length ? 7 : 0, this.warpT * 5);
+    if (amp > 0.3) rasterWave(ctx, canvas, PX, PY, PW, PH, amp, this.realT);
+    if (!fxCfg.low) bloom(ctx, canvas, PX, PY, PW, PH, 0.42);
+    if (this.cutIn) this.renderCutIn();
     ctx.setTransform(1, 0, 0, 1, sx * 0.3, sy * 0.3); this.renderBottom();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const p of this.uiParts) { ctx.globalAlpha = clamp(p.life / p.max * 1.5, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), p.s, p.s); } ctx.globalAlpha = 1;
@@ -763,7 +789,34 @@ class Game {
     if (this.paused) this.centerBox(["PAUSED", "P / START TO RESUME"], CYA);
     if (this.duel && this.state === "play" && !this.dead) this.renderDuelBar();
     if (this.state === "over" && this.realT - this.endT > 0.5) this.renderLeaderboard(false);
-    if (this.state === "win" && this.realT - this.endT > 1) this.renderLeaderboard(true);
+    if (this.state === "win" && this.realT - this.endT > 4.5) this.renderLeaderboard(true);
+  }
+  renderCutIn() {
+    const c = this.cutIn!, t = c.t, e = t < 0.14 ? t / 0.14 : t > 0.68 ? Math.max(0, 1 - (t - 0.68) / 0.22) : 1, out = t > 0.68;
+    const by = PY + Math.round(PH * 0.3), bh = 54, ox = Math.round((1 - e) * (out ? PW : -PW));
+    ctx.save(); ctx.beginPath(); ctx.rect(PX, PY, PW, PH); ctx.clip(); ctx.translate(PX + ox, by);
+    ctx.fillStyle = "rgba(20,4,30,0.92)"; ctx.fillRect(0, 0, PW, bh);
+    for (let i = 0; i < 9; i++) { const lx = ((i * 41 + t * 900) % (PW + 40)) - 20; ctx.fillStyle = i % 2 ? "rgba(255,48,208,0.35)" : "rgba(255,230,80,0.3)"; ctx.fillRect(Math.round(lx), 6 + (i * 13) % (bh - 12), 22, 1); }
+    ctx.fillStyle = YEL; ctx.fillRect(0, 0, PW, 2); ctx.fillRect(0, bh - 2, PW, 2); ctx.fillStyle = MAG; ctx.fillRect(0, 3, PW, 1); ctx.fillRect(0, bh - 4, PW, 1);
+    ctx.fillStyle = "#000"; ctx.fillRect(6, 4, 46, 46); cycleRect(ctx, 6, 4, 46, 46, STAGE_PAL[4], this.realT); ctx.drawImage(pilotSpr, 8, 6, 42, 42);
+    ctx.drawImage(bossSpr, PW - 52, 14, 42, 20);
+    drawText(ctx, "MINI-BOSS SENT!", 60, 12, YEL, 2, "left", "#401000"); drawText(ctx, "INCOMING FOR " + c.name, 60, 34, WHT, 1);
+    ctx.restore();
+  }
+  buildWinStars() {
+    const [tc, tg] = (() => { const c = document.createElement("canvas"); c.width = PW; c.height = 120; return [c, c.getContext("2d")!] as const; })();
+    drawText(tg, "1ST", PW / 2, 10, "#fff", 12, "center"); const d = tg.getImageData(0, 0, PW, 120).data; this.winStars = []; this.winT = 0;
+    for (let y = 0; y < 120; y += 3) for (let x = 0; x < PW; x += 3) if (d[(y * PW + x) * 4 + 3] > 100) {
+      const tx = x, ty = y + 70; this.winStars.push({ x: tx, y: ty, sx: tx + rnd(-140, 140), sy: -rnd(10, 260), at: rnd(0.4, 2.6), col: pick([YEL, WHT, CYA, MAG, YEL]) }); }
+    void tc;
+  }
+  renderWinStars() {
+    const t = this.winT;
+    for (const s of this.winStars) {
+      const k = clamp(t / s.at, 0, 1), e = 1 - Math.pow(1 - k, 3), x = s.sx + (s.x - s.sx) * e, y = s.sy + (s.y - s.sy) * e;
+      if (k < 1) this.drawStreak(x, y, s.x - s.sx, s.y - s.sy, s.col, true);
+      else { const tw = Math.floor(this.realT * 8 + s.x) % 4; ctx.fillStyle = tw ? s.col : WHT; ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 3, 3); if (!tw) { ctx.fillRect(Math.round(s.x) - 2, Math.round(s.y), 5, 1); } }
+    }
   }
   renderDuelBar() {
     const r = this.rivals.find(q => q.alive); if (!r) return;
@@ -779,7 +832,9 @@ class Game {
     ctx.fillStyle = "rgba(6,2,14,0.88)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, col);
     lines.forEach((l, i) => { const big = i === 0; drawText(ctx, l, PX + PW / 2, y + 10 + i * 14 + (big ? -2 : 2), big ? col : WHT, big ? 3 : 1, "center", big ? "#000" : undefined); });
   }
-  frame(x: number, y: number, w: number, h: number, col: string) { ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); ctx.globalAlpha = 0.35; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); ctx.globalAlpha = 1; }
+  frame(x: number, y: number, w: number, h: number, col: string) {
+    if (!fxCfg.low) { ctx.strokeStyle = col; ctx.globalAlpha = 0.35; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); ctx.globalAlpha = 1; cycleRect(ctx, x, y, w, h, this.pal(col), this.realT); return; }
+    ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); ctx.globalAlpha = 0.35; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); ctx.globalAlpha = 1; }
 
   renderLobby() {
     const w = 300, h = 160, x = (W - w) / 2, y = 180; ctx.fillStyle = "rgba(6,2,14,0.94)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, CYA);
@@ -806,7 +861,7 @@ class Game {
     drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 262, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
     if (Math.floor(t * 2) % 2 === 0) drawText(ctx, pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH", W / 2, 240, WHT, 2, "center");
     const help = pad.connected ? ["CONTROLLER: L-STICK / D-PAD MOVE   A HOLD FIRE   X HOLD FOCUS   B BOMB", "R-STICK FLICK TARGET: UP RANDOM  RIGHT KOS  DOWN ATTACKERS  LEFT BADGES   START PAUSE",
-      ] : ["MOVE: ARROWS / WASD   FIRE: HOLD Z / SPACE   FOCUS: SHIFT   BOMB: X", "TARGET: 1 RANDOM  2 KOS  3 ATTACKERS  4 BADGES    M MUTE   P PAUSE",
+      ] : ["MOVE: ARROWS / WASD   FIRE: HOLD Z / SPACE   FOCUS: SHIFT   BOMB: X", "TARGET: 1 RANDOM  2 KOS  3 ATTACKERS  4 BADGES   M MUTE  P PAUSE  V CRT  G LOW-FX",
       "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
     help.forEach((l, i) => drawText(ctx, l, W / 2, 280 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
@@ -839,7 +894,13 @@ class Game {
     // grids (all 100 opponents)
     ctx.fillStyle = "#0c0418"; ctx.fillRect(2, 188, LW, 170); this.frame(2, 188, LW, 170, MAG);
     ctx.fillStyle = "#0c0418"; ctx.fillRect(462, 2, LW, 170); this.frame(462, 2, LW, 170, MAG);
-    for (const r of this.rivals) { const p = this.cellPos(r.id); this.drawMini(r, p.x, p.y, false); }
+    for (const r of this.rivals) {
+      const p = this.cellPos(r.id); let dx = 0, dy = 0, gl = 0, gold = false;
+      for (const q of this.ripples) { const cx = p.x + CELL_W / 2 - q.x, cy = p.y + CELL_H / 2 - q.y, d = Math.hypot(cx, cy) || 1, k = d - q.t * 260;
+        if (Math.abs(k) < 18) { const a = Math.cos(k / 18 * Math.PI / 2) * (1 - q.t / 1.2); dx += cx / d * a * 3; dy += cy / d * a * 3; if (a > gl) { gl = a; gold = q.gold; } } }
+      this.drawMini(r, p.x + Math.round(dx), p.y + Math.round(dy), false);
+      if (gl > 0.15) { ctx.globalAlpha = Math.min(1, gl); ctx.strokeStyle = gold ? YEL : CYA; ctx.strokeRect(p.x + Math.round(dx) + 0.5, p.y + Math.round(dy) + 0.5, CELL_W - 1, CELL_H - 1); ctx.globalAlpha = 1; }
+    }
     // right lower: targeting / incoming / time
     const RX = 468; ctx.fillStyle = "#0c0418"; ctx.fillRect(462, 174, LW, 184); this.frame(462, 174, LW, 184, CYA);
     drawText(ctx, "TARGETING", RX, 182, CYA, 2);
@@ -889,6 +950,7 @@ class Game {
       if (r.flash > 0 && Math.floor(this.realT * 20) % 2) bc = WHT;
       if (this.targets.includes(r.id)) bc = YEL;
       ctx.strokeStyle = bc; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      if (!big && !fxCfg.low) { ctx.globalAlpha = 0.7; cometRect(ctx, x, y, w, h, STAGE_PAL[this.vStage][(r.id % 3) + 1], this.realT * 0.35 + r.seed); ctx.globalAlpha = 1; }
       drawText(ctx, String(r.id + 1), x + 2, y + 2, this.targets.includes(r.id) ? YEL : r.isBot ? "#9080c0" : "#60ff80", 1);
       if (r.badges > 0) { ctx.fillStyle = YEL; for (let i = 0; i < Math.min(4, r.badges); i++) ctx.fillRect(x + 2 + i * 3, y + h - 9, 2, 2); }
       if (r.target === -1 && !big) { ctx.fillStyle = SENT_COL; ctx.fillRect(x + w - 2, y + 2, 1, 5); }
@@ -902,7 +964,8 @@ class Game {
           ctx.fillStyle = MAG; for (const [a, fy, b] of L) { ctx.fillRect(a + 1, fy + 1, 2, 2); ctx.fillRect(b + 1, fy + 1, 2, 2); }
           ctx.fillStyle = YEL; for (const [a, fy, b] of L) { ctx.fillRect(a, fy, 2, 2); ctx.fillRect(b, fy, 2, 2); }
         } }
-      else { ctx.fillStyle = WHT; ctx.globalAlpha = 1 - r.koT / 0.4; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
+      else { ctx.fillStyle = r.koBy === -1 ? YEL : WHT; ctx.globalAlpha = 1 - r.koT / 0.4; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
+      if (r.koBy === -1 && r.koT < 1.2 && Math.floor(r.koT * 10) % 2 === 0) { ctx.strokeStyle = YEL; ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1); } // your KO flashes gold
     }
   }
   drawStreak(x: number, y: number, vx: number, vy: number, col: string, big: boolean) {
@@ -941,16 +1004,29 @@ class Game {
     ctx.save(); ctx.translate(PX, PY);
     ctx.beginPath(); ctx.rect(0, 0, PW, PH); ctx.clip();
     ctx.fillStyle = "#04010a"; ctx.fillRect(0, 0, PW, PH);
+    const bw = this.bgW, tt = this.realT;
+    if (bw[4] > 0.01) { if (!this.coreGrad) { const g = ctx.createLinearGradient(0, 0, 0, PH); g.addColorStop(0, "#1a0204"); g.addColorStop(0.6, "#2a0406"); g.addColorStop(1, "#5a0c06"); this.coreGrad = g; }
+      ctx.globalAlpha = bw[4]; ctx.fillStyle = this.coreGrad; ctx.fillRect(0, 0, PW, PH); ctx.globalAlpha = 1; scrollTile(ctx, coreT, tt * 24, bw[4] * 0.42);
+      for (let i = 0; i < 36; i++) { const ex = (i * 53.7 + Math.sin(tt + i) * 6) % PW, ey = PH - ((tt * (30 + i % 5 * 9) + i * 37) % (PH + 10)); ctx.globalAlpha = bw[4] * (0.5 + 0.5 * Math.sin(tt * 9 + i)); ctx.fillStyle = i % 3 ? "#ff8030" : YEL; ctx.fillRect(Math.round(ex), Math.round(ey), 1, i % 4 ? 1 : 2); } ctx.globalAlpha = 1; }
+    scrollTile(ctx, nebTile, tt * 9, bw[1]); if (!fxCfg.low) scrollTile(ctx, nebTile, tt * 16 + 170, bw[1] * 0.35);
+    scrollTile(ctx, fortFar, tt * 14, bw[2]);
     // nebula band (dithered purple haze)
-    for (let yy = 0; yy < PH; yy += 2) { const wy = yy - this.time * 6; const cx = PW / 2 + Math.sin(wy * 0.02) * 45 + Math.sin(wy * 0.007) * 25, hw = 18 + Math.sin(wy * 0.05) * 8;
+    if (bw[0] > 0.01) ctx.globalAlpha = bw[0];
+    for (let yy = 0; yy < PH && bw[0] > 0.01; yy += 2) { const wy = yy - this.time * 6; const cx = PW / 2 + Math.sin(wy * 0.02) * 45 + Math.sin(wy * 0.007) * 25, hw = 18 + Math.sin(wy * 0.05) * 8;
       ctx.fillStyle = "rgba(110,30,170,0.13)"; ctx.fillRect(Math.round(cx - hw * 1.8), yy, Math.round(hw * 3.6), 2);
       ctx.fillStyle = "rgba(170,60,220,0.12)"; ctx.fillRect(Math.round(cx - hw), yy, Math.round(hw * 2), 2);
       if ((yy / 2 + Math.floor(wy)) % 3 === 0) { ctx.fillStyle = "rgba(220,140,255,0.25)"; ctx.fillRect(Math.round(cx + Math.sin(yy * 1.7) * hw), yy, 1, 1); } }
+    ctx.globalAlpha = 1;
     for (const s of this.bgStars) { ctx.fillStyle = s.z > 0.75 ? WHT : s.z > 0.45 ? "#8a7ac0" : "#3a2a6a"; ctx.fillRect(Math.round(s.x), Math.round(s.y), 1, s.z > 0.85 ? 2 : 1); }
+    scrollTile(ctx, fortNear, tt * 42, bw[3]);
+    { const pulse = Math.exp(-audio.beatPhase() * 5); ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.05 + 0.06 * pulse * (0.5 + this.vStage * 0.15); ctx.fillStyle = STAGE_TINT[this.vStage]; ctx.fillRect(0, 0, PW, PH); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over"; }
+    ctx.globalAlpha = clamp(1 - bw[3] - bw[4], 0, 1);
     // side towers
     for (const side of [0, 1]) for (let i = 0; i < 6; i++) { const hh = 40 + ((i * 37) % 60), ww = 10 + (i % 3) * 4; const x = side ? PW - ww - (i * 7) % 18 : (i * 7) % 18; const y = PH - hh - ((i * 23) % 30) + 30;
       ctx.fillStyle = "#140828"; ctx.fillRect(x, y, ww, PH - y); ctx.fillStyle = "#2a1050"; ctx.fillRect(x + 1, y, 1, PH - y); if (i % 2) { ctx.fillStyle = MAG; ctx.fillRect(x + ww / 2, y + 6, 1, 1); } }
+    ctx.globalAlpha = 1;
     for (const s of this.streaks) this.drawStreak(s.x, s.y, s.vx, s.vy, s.col, s.big);
+    if (this.state === "win") this.renderWinStars();
     if (this.bombFx > 0) { const r = (0.6 - this.bombFx) * 500, o = this.bombAt || { x: this.px, y: this.py }; ctx.strokeStyle = this.bombCol; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(o.x, o.y, r, 0, 6.283); ctx.stroke(); ctx.lineWidth = 1; }
     // items
     for (const it of this.items) {
@@ -998,9 +1074,10 @@ class Game {
 const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview;
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
-let last = performance.now(), acc = 0; const STEP = 1 / 60;
+let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };
 function loop(now: number) {
-  acc += Math.min(0.1, (now - last) / 1000); last = now;
+  const fdt = (now - last) / 1000; acc += Math.min(0.1, fdt); last = now;
+  perf.t += fdt; perf.n++; if (perf.t > 3) { const fps = perf.n / perf.t; (window as any).__fps = fps; if (fps < 48 && !fxCfg.low && game.state === "play" && !document.hidden) { fxCfg.low = true; game.padMsg = "LOW FX MODE (G TO TOGGLE)"; game.padMsgT = 2.5; } perf.t = 0; perf.n = 0; }
   pollPad();
   while (acc >= STEP) { game.update(STEP); pressed.clear(); acc -= STEP; }
   game.render(); present(); requestAnimationFrame(loop);

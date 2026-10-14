@@ -94,6 +94,13 @@ await p.evaluate(() => { const g = window.__game; g.bombs = 5; g.chain = 8; g.ch
 await p.waitForTimeout(150); await p.screenshot({ path: "triple_bomb.png" }); await p.waitForTimeout(600);
 console.log("triple bomb [bombs, chain>0, queue]:", await p.evaluate(() => { const g = window.__game; return [g.bombs, g.chain > 0, g.tripleQ.length]; }));
 // upgraded enemies late in the match
+await p.evaluate(() => { const g = window.__game; let pl = 101; g.rivals.forEach((r, i) => { if (i >= 45 && r.alive) { r.alive = false; r.place = pl--; r.koT = 1; } }); });
+await p.waitForTimeout(3500);
+await p.evaluate(() => { const g = window.__game; g.chain = 40; g.eligible = true; g.cashIn(true); });
+await p.waitForTimeout(250); await p.screenshot({ path: "cutin.png" });
+await p.waitForTimeout(1500);
+await p.screenshot({ path: "screenshot13.png" });
+console.log("fx:", await p.evaluate(() => ({ crt: true, vStage: window.__game.vStage, bgW: window.__game.bgW.map(x => +x.toFixed(2)), fps: Math.round(window.__fps) })));
 await p.evaluate(() => { const g = window.__game; g.hp = 3; g.inv = 99; g.time = 330; g.enemies.length = 0; g.eb.length = 0; for (let i = 0; i < 4; i++) g.spawnFormation(6, i, i % 3, false, -1); });
 await p.waitForTimeout(2600);
 await p.screenshot({ path: "screenshot9.png" });
@@ -106,6 +113,11 @@ console.log("music stage before -> after field shrinks to 7:", m0, "->");
 console.log("music:", await p.evaluate(() => { const a = window.__audio; return { playing: a.playing, stage: a.tier, bpm: a.tempo, bar: a.seq && a.seq.bar }; }));
 await p.waitForTimeout(600);
 await p.screenshot({ path: "screenshot12.png" });
+await p.waitForTimeout(1500); await p.evaluate(() => { const g = window.__game; g.bomb(); });
+await p.waitForTimeout(120); await p.screenshot({ path: "raster.png" });
+await p.waitForTimeout(1500);
+await p.screenshot({ path: "screenshot14.png" });
+console.log("boss stage fx:", await p.evaluate(() => ({ vStage: window.__game.vStage, bgW: window.__game.bgW.map(x => +x.toFixed(2)), fps: Math.round(window.__fps), low: false })));
 console.log("bot names:", await p.evaluate(() => window.__game.rivals.slice(0, 8).map(r => r.name).join(",")), "unique:", await p.evaluate(() => new Set(window.__game.rivals.map(r => r.name)).size));
 await p.evaluate(() => { window.__game.inv = 0; window.__game.gameOver(); });
 await p.waitForTimeout(1200);
@@ -114,6 +126,8 @@ await p.waitForTimeout(300); const scrolled = await p.evaluate(() => window.__ga
 await p.evaluate(() => { window.__game.lbScroll = 0; }); await p.waitForTimeout(100);
 await p.screenshot({ path: "screenshot11.png" }); console.log("scroll after holding down:", scrolled);
 console.log("leaderboard:", await p.evaluate(() => { const g = window.__game; return { state: g.state, place: g.place, scroll: g.lbScroll, myKos: g.myKos, unplaced: g.rivals.filter(r => !r.place).length }; }));
+await p.evaluate(() => { const g = window.__game; g.state = "win"; g.endT = g.realT; g.buildWinStars(); });
+await p.waitForTimeout(3000); await p.screenshot({ path: "victory.png" });
 console.log("missing glyphs:", await p.evaluate(() => [...window.__missingGlyphs].join("")));
 const fps = await p.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { n++; if (performance.now() - t < 1000) requestAnimationFrame(f); else r(n); }; requestAnimationFrame(f); }));
 console.log("fps", fps, "errors:", errs);

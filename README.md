@@ -51,3 +51,6 @@ The last CPU in the duel is tougher (6 HP, slow regen, little random attrition):
 
 ## Duel, names & leaderboard
 The final duel CPU has 14 HP and regenerates; beat it with a sustained barrage (~7 attacks). Enter your pilot name after the title (saved locally, used online). Bots have arcade callsigns. After you are out (or win), a scrollable 101-place leaderboard shows who KO'd whom, with stars for your KOs; your KOs also get a big X on the grid.
+
+## Visual FX
+CRT filter (V / Select), stage backgrounds (starfield -> nebula -> fortress -> red core), beat-pulsing palette shifts, palette-cycled borders, mini-boss cut-in banner, grid KO ripples, raster wobble on bombs, a meteor "1ST" on victory. G toggles low-FX mode (auto when fps drops).

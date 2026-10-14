@@ -79,6 +79,12 @@ export class Audio {
   // ---- Music: Genesis-style FM tracker (see genesis.ts / sequencer.ts / songs.ts) ----
   seq: Sequencer | null = null; private timer2 = 0; duel = false;
   /** 0..4 = stage by players remaining (101-75, 75-50, 50-25, 25-10, final 10 = boss theme); duel => stage 5. Applied on the next bar line. */
+  /** 0..1 position within the current beat of the music (0 = on the beat), for beat-synced visuals. */
+  beatPhase() {
+    const q = this.seq, c = this.ctx; if (!q || !c || !q.running) return 0.5;
+    const beat = 60 / q.bpm, bar = beat * 4; let s = q.nextBarTime - bar; const now = c.currentTime;
+    while (s > now) s -= bar; return ((now - s) / beat) % 1;
+  }
   setTier(t: number) { this.pendingTier = t; if (this.seq) { this.seq.pending = this.duel ? 5 : Math.max(0, Math.min(4, t)); } }
   startMusic() {
     const c = this.ctx; if (!c) return;
