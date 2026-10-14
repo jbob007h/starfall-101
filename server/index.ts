@@ -9,7 +9,7 @@ const PORT = Number(process.env.PORT) || 8080;
 const MAX = 101;
 const LOBBY_TIMEOUT = Number(process.env.LOBBY_TIMEOUT || 20); // seconds after first human joins
 const DIST = path.resolve(__dirname, "../../dist");
-const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".png": "image/png", ".css": "text/css", ".json": "application/json" };
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".png": "image/png", ".css": "text/css", ".json": "application/json", ".ogg": "audio/ogg" };
 
 const server = http.createServer((req, res) => {
   const url = (req.url || "/").split("?")[0];

@@ -61,3 +61,6 @@ The final duel CPU has 14 HP and regenerates; beat it with a sustained barrage (
 
 ## Visual FX
 CRT filter (V / Select), stage backgrounds (starfield -> nebula -> fortress -> red core), beat-pulsing palette shifts, palette-cycled borders, mini-boss cut-in banner, grid KO ripples, raster wobble on bombs, a meteor "1ST" on victory. G toggles low-FX mode (auto when fps drops).
+
+## Trance soundtracks (NEON TRANCE / STARLIGHT TRANCE)
+Pre-rendered with the offline Python synth (`tools/trance_game.py` + `music_styles/lib.py`), 8 seamless 16-bar loop sections each (same players-left thresholds as THUNDER BLITZ), Opus 96k in `assets/music/` (copied to `dist/music/` by `npm run build`). `src/audio/stream.ts` decodes, loops and crossfades one bar on section changes, lazy-loading the next section. `npm run build:single` embeds them base64 into STARFALL101.html. `node music-test.mjs` (server on :8080) checks section switching.
