@@ -1,5 +1,5 @@
 // STARFALL 101 soundtrack: "Starfall Overdrive" in E minor. Five stages that intensify as players drop out;
-// the last stage is the boss-fight tune (also used for the final duel, with a tempo boost).
+// final 10 = boss-fight theme; final duel = the same theme, climactic variation.
 import { Patch } from "./genesis";
 import { Song, Pattern, noteMidi, midiName } from "./sequencer";
 
@@ -36,83 +36,122 @@ const rhythm = (r: string, x: string) => toks(r).map(t => t === "X" ? x : t).joi
 const arp = (tri: number[], idx: number[], oct: number) => idx.map(i => midiName(i === 3 ? tri[0] + 12 + oct : tri[i] + oct)).join(" ");
 const shift = (line: string, n: number) => { const a = toks(line); return [...Array(n).fill("-"), ...a.slice(0, 16 - n)].join(" "); };
 const crash = (d: string) => { const a = toks(d); a[0] = a[0] + "+c"; return a.join(" "); };
-const FILL = "k . s . s s . s s s k s s'7 s'8 s s";
 
-// E minor progression i - VI - VII - V for stages 0-3; boss: i - bII - bIII - II (Phrygian menace)
+// E minor progression i - VI - VII - V
 const PROG = [{ tri: [64, 67, 71], bass: 0 }, { tri: [60, 64, 67], bass: -4 }, { tri: [62, 66, 69], bass: -2 }, { tri: [59, 63, 66], bass: -5 }];
-const BOSSP = [{ tri: [64, 67, 71], bass: 0 }, { tri: [65, 69, 72], bass: 1 }, { tri: [67, 71, 74], bass: 3 }, { tri: [66, 70, 73], bass: 2 }];
 
 const BASS_A = "E2 . E3 . E2 . E3 . E2 . E3 . D3 . E3 .";
 const BASS_B = "E2 E2 E3 E2 - E2 E3 E2 E2 E2 E3 E2 D3 E2 B2 E3";
 const BASS_C = "E2 E2 E3 E2 E2 E3 D3 E2 E2 E2 E3 E2 G2 A2 B2 D3";
-const BASS_BOSS = "E2 E2 E2 E3 E2 E2 E3 E2 E2 E2 E3 E2 G2 E2 A#2 B2";
+// All percussion is DAC PCM (mono, layered hits premixed): k kick, s snare, h/o hats, c crash, t/u toms, p clap
 const DRUMS = [
   "k . h . s . h . k . k h s . h .",
-  "k . h k s . h . k . k h s . h h",
-  "k h h k s h h k k h k h s h s h",
-  "k h k h s h k k k h k h s s k s",
+  "k h h k s h h h k h k h s h o h",
+  "k h o k s+h h h k k h k h s h s o",
+  "k+h h k h s+h h k k k+h h k h s s+p k s",
 ];
-const DRUM_BOSS = "k h s h k k s h k h s h k s k s";
-const HATS = "h h'5 o h'5 h h'5 o h'5 h h'5 o h'5 h h'5 o h";
+const FILL = "k . s . s s . s u u t t s s'7 s s";
 const LEAD = [
   "E5 . . B4 . . E5 . F#5 . G5 . F#5 . E5 D5", "E5 . . . . . G5 . . . A5 . G5 . E5 .",
   "F#5 . . D5 . . F#5 . A5 . . . B5 . A5 .", "F#5 . . . . . . . D#5 . F#5 . B5 . . .",
   "B5 . . A5 . . G5 . A5 . B5 . D6 . B5 .", "C6 . . B5 . . G5 . . . E5 . G5 . C6 .",
   "D6 . . C6 . . A5 . F#5 . A5 . D6 . E6 .", "D#6 . . . B5 . . . F#5 . A5 . B5 . . -",
 ];
-const BOSS_LEAD = [
-  "E5 F#5 G5 A5 B5 A5 G5 F#5 E5 F#5 G5 B5 E6 . D#6 .", "F5 G5 A5 C6 F6 . E6 C6 A5 C6 E6 F6 A6 . G6 F6",
-  "G5 A5 B5 D6 G6 F#6 D6 B5 G5 B5 D6 G6 B6 . A6 G6", "F#5 A#5 C#6 F#6 E6 C#6 A#5 C#6 D#6 F#6 A6 . B6 A6 F#6 D#6",
-  "E6 . B5 . G5 . B5 E6 G6 . F#6 E6 D#6 . B5 .", "F6 . C6 . A5 . C6 F6 A6 . G6 F6 E6 . C6 .",
-  "G6 . D6 . B5 . D6 G6 B6 . A6 G6 F#6 . D6 .", "E6 D#6 C6 B5 A5 G5 F#5 E5 D#5 E5 F#5 G5 A5 B5 C6 D#6",
-];
 const ARP_IDX = [0, 1, 2, 3, 2, 1, 0, 1, 0, 1, 2, 3, 2, 1, 2, 3];
+
+// ---------- BOSS THEME (final 10) + FINAL DUEL variation ----------
+// 16 bars: A = call/response hook over Em-C-D-B (x2, second answer climbs, fill only at the phrase end),
+//          B = Am-Em-C-B / C-D-B-B bridge that lifts to E6 and runs back into the hook.
+const CH: Record<string, { tri: number[]; bass: number }> = {
+  Em: { tri: [64, 67, 71], bass: 0 }, C: { tri: [60, 64, 67], bass: -4 }, D: { tri: [62, 66, 69], bass: -2 },
+  B: { tri: [59, 63, 66], bass: -5 }, Am: { tri: [69, 72, 76], bass: 5 },
+};
+const BOSS_CHORDS = ["Em", "C", "D", "B", "Em", "C", "D", "B", "Am", "Em", "C", "B", "C", "D", "B", "B"];
+const HOOK = [
+  "E5 . . . B5 . . . A5 . G5 . F#5 . G5 .",      // call
+  "E5 . . . . . . . - . G5 . A5 . B5 .",
+  "A5 . . . F#5 . . . D5 . E5 . F#5 . A5 .",      // response
+  "F#5 . . . . . . . D#5 . . . B4 . . .",
+  "E5 . . . B5 . . . A5 . G5 . F#5 . G5 .",      // call
+  "E5 . . . . . . . - . G5 . A5 . B5 .",
+  "C6 . . . B5 . . . A5 . B5 . C6 . D6 .",        // response climbs
+  "B5 . . . . . . . F#5 G5 A5 B5 C6 B5 A5 F#5",   // phrase-end fill
+  "C6 . . . B5 . . . A5 . . . E5 . . .",          // bridge
+  "G5 . . . F#5 . . . E5 . . . B4 . . .",
+  "E5 . G5 . C6 . . . B5 . A5 . G5 . E5 .",
+  "F#5 . . . . . . . - . B4 . D#5 . F#5 .",
+  "G5 . . . A5 . . . B5 . . . E6 . . .",
+  "D6 . . . C6 . B5 . A5 . . . F#5 . A5 .",
+  "B5 . . . . . . . . . . . . . . .",
+  "B5 A5 G5 F#5 E5 F#5 G5 A5 B5 C6 D#6 E6 F#6 . D#6 .", // run back into the hook
+];
+/** Diatonic third below in E minor (D# over the B chord). */
+function third(line: string, chordName: string) {
+  const pcs = chordName === "B" ? [4, 6, 7, 9, 11, 0, 3] : [4, 6, 7, 9, 11, 0, 2];
+  return toks(line).map(tk => { const m = noteMidi(tk); if (m < 0) return tk; let d = pcs.indexOf(((m % 12) + 12) % 12);
+    if (d < 0) return midiName(m - 3); const tp = pcs[(d + 5) % 7]; let x = m - 1; while (((x % 12) + 12) % 12 !== tp) x--; return midiName(x); }).join(" ");
+}
+const BOSS_BASS = "E2 . E2 E3 E2 . E2 E3 E2 . E2 E3 E2 . E3 E2";
+const DUEL_BASS = "E2 E2 E3 E2 E2 E2 E3 E2 E2 E2 E3 E2 E2 E3 E2 E3";
+const BOSS_DRUM = "k+h h s+h h k+h h s+h k k+h h s+h h k+h k s+o h";
+const DUEL_DRUM = "k+h k s+h k k+h k s+h k k+h k s+h k k s+h s+p s";
+const BOSS_FILL = "k . s . s s . s u u t t s s s+p s";
 
 const patterns: Record<string, Pattern> = {};
 function stagePatterns(s: number) {
   const names: string[] = [];
   for (let b = 0; b < 8; b++) {
-    const boss = s === 4, c = (boss ? BOSSP : PROG)[b % 4], p: Pattern = {};
-    let drums = boss ? DRUM_BOSS : DRUMS[s]; if (b === 7) drums = FILL; if (b === 0 || (s >= 3 && b === 4)) drums = crash(drums);
+    const c = PROG[b % 4], p: Pattern = {};
+    let drums = DRUMS[s]; if (b === 7) drums = FILL; if (b === 0 || (s >= 3 && b === 4)) drums = crash(drums);
     p.dac = drums;
-    if (boss) {
-      p.bass = T(BASS_BOSS, c.bass);
-      p.lead = BOSS_LEAD[b];
-      p.harm = T(BOSS_LEAD[b], -12);
-      p.pad = rhythm("X . . . . . . . X . . . . . . .", chord(c.tri.map(n => n - 12)));
-      p.brass = rhythm("X . . X . . X . X . . X . . X .", chord([c.tri[0] - 24, c.tri[0] - 17, c.tri[0] - 12]));
-      p.psg1 = arp(c.tri, ARP_IDX, 12); p.psg2 = shift(BOSS_LEAD[b], 2); p.noise = toks(HATS).map(() => "h").join(" ");
-    } else {
-      p.bass = T(s === 0 ? BASS_A : s === 1 ? BASS_B : BASS_C, c.bass);
-      p.pad = s === 0 ? rhythm("X . . . . . X . . . X . . . . .", chord(c.tri)) : rhythm("X . . X . . X . . . X . X . . .", chord(c.tri));
-      if (s >= 1) { p.psg1 = arp(c.tri, ARP_IDX, 12); p.noise = HATS; }
-      if (s >= 2) p.lead = LEAD[b];
-      if (s >= 3) { p.harm = T(LEAD[b], -5); p.psg2 = shift(LEAD[b], 3); p.brass = rhythm("- - X . - - X . - - X . - X . .", chord([c.tri[0] - 12, c.tri[2] - 12])); }
-    }
+    p.bass = T(s === 0 ? BASS_A : s === 1 ? BASS_B : BASS_C, c.bass);
+    p.pad = s === 0 ? rhythm("X . . . . . X . . . X . . . . .", chord(c.tri)) : rhythm("X . . X . . X . . . X . X . . .", chord(c.tri));
+    if (s >= 1) p.psg1 = arp(c.tri, ARP_IDX, 12);
+    if (s >= 2) p.lead = LEAD[b];
+    if (s >= 3) { p.harm = T(LEAD[b], -5); p.psg2 = shift(LEAD[b], 3); p.brass = rhythm("- - X . - - X . - - X . - X . .", chord([c.tri[0] - 12, c.tri[2] - 12])); }
     const name = `s${s}b${b}`; patterns[name] = p; names.push(name);
   }
   return names;
 }
-const orders = [0, 1, 2, 3, 4].map(stagePatterns);
+function bossPatterns(duel: boolean) {
+  const names: string[] = [];
+  for (let b = 0; b < 16; b++) {
+    // duel: the hook twice, second time modulated up a whole step (climactic key change), harmonized throughout
+    const k = duel ? b % 8 : b, up = duel && b >= 8 ? 2 : 0, cn = BOSS_CHORDS[k], c = CH[cn], p: Pattern = {};
+    const phraseEnd = duel ? b === 7 || b === 15 : b === 7 || b === 15;
+    let drums = duel ? DUEL_DRUM : BOSS_DRUM; if (phraseEnd) drums = BOSS_FILL;
+    if (duel ? b % 2 === 0 : b % 4 === 0) drums = crash(drums);
+    p.dac = drums;
+    p.bass = T(duel ? DUEL_BASS : BOSS_BASS, c.bass + up);
+    p.lead = T(HOOK[k], up);
+    if (duel || (b >= 4 && b < 8) || b >= 12) p.harm = T(third(HOOK[k], cn), up);
+    p.pad = T(rhythm("X . . . . . . . X . . . . . . .", chord(c.tri.map(n => n - 12))), up);
+    p.brass = T(rhythm(duel ? "X . . X . . X . . . X . X . . ." : "X . . . . . X . . . . . X . . .", chord([c.tri[0] - 24, c.tri[0] - 17, c.tri[0] - 12])), up);
+    p.psg1 = T(arp(c.tri, [0, 1, 2, 1, 0, 1, 2, 3], 12).split(" ").map(x => x + " .").join(" "), up); // calm 8th-note arps under the hook
+    const name = `${duel ? "duel" : "boss"}b${b}`; patterns[name] = p; names.push(name);
+  }
+  return names;
+}
+const orders = [0, 1, 2, 3].map(stagePatterns);
 
 export const SONG: Song = {
   patches: P, patterns,
-  channels: [ // 5 FM + channel-6 DAC, plus SN76489 PSG (2 tone + noise). Genesis-style hard-ish panning.
+  channels: [ // 5 FM + FM channel 6 in DAC mode, plus SN76489 PSG tone channels. Genesis-style panning.
     { name: "bass", type: "fm", patch: "slapBass", vol: 0.95, pan: 0, gate: 0.8 },
-    { name: "lead", type: "fm", patch: "leadBrass", vol: 0.75, pan: 0.15 },
+    { name: "lead", type: "fm", patch: "leadBrass", vol: 0.8, pan: 0.15 },
     { name: "harm", type: "fm", patch: "leadBrass", vol: 0.42, pan: -0.55 },
-    { name: "pad", type: "fm", patch: "ePiano", vol: 0.5, pan: 0.45 },
-    { name: "brass", type: "fm", patch: "stab", vol: 0.55, pan: -0.3, gate: 0.6 },
-    { name: "dac", type: "dac", vol: 0.95, pan: 0 },
-    { name: "psg1", type: "psg", vol: 0.55, pan: 0.6, env: "pluck" },
+    { name: "pad", type: "fm", patch: "ePiano", vol: 0.45, pan: 0.45 },
+    { name: "brass", type: "fm", patch: "stab", vol: 0.5, pan: -0.3, gate: 0.6 },
+    { name: "dac", type: "dac", vol: 0.9, pan: 0 },
+    { name: "psg1", type: "psg", vol: 0.45, pan: 0.6, env: "pluck" },
     { name: "psg2", type: "psg", vol: 0.35, pan: -0.6, env: "sustain" },
-    { name: "noise", type: "noise", vol: 0.5, pan: 0.25 },
   ],
   stages: [
     { name: "LAUNCH", bpm: 150, order: orders[0] },
     { name: "PURSUIT", bpm: 156, order: orders[1] },
     { name: "ASSAULT", bpm: 164, order: orders[2] },
     { name: "OVERDRIVE", bpm: 172, order: orders[3] },
-    { name: "FINAL BOSS", bpm: 186, order: orders[4], patches: { bass: "heavyBass", lead: "shred", harm: "shred" } },
+    { name: "FINAL BOSS", bpm: 186, order: bossPatterns(false), patches: { bass: "heavyBass", lead: "leadBrass", harm: "leadBrass" } },
+    { name: "FINAL DUEL", bpm: 194, order: bossPatterns(true), patches: { bass: "heavyBass", lead: "leadBrass", harm: "shred" } },
   ],
 };

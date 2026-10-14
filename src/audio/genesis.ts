@@ -101,31 +101,67 @@ export function playNoise(ctx: BaseAudioContext, dest: AudioNode, t: number, vol
   s.connect(g); g.connect(dest); s.start(t, Math.random() * 0.5); s.stop(t + e.length / 60 + 0.05);
 }
 
-/** Channel-6 DAC drum kit: generated once per context, 8-bit, sample-and-hold at ~13.3 kHz. */
+/** Channel-6 DAC drum kit (Streets of Rage-style compressed PCM): synthesized at full rate, then
+ *  compressed/saturated, resampled to ~13 kHz with sample-and-hold and quantized to 8 bits. */
 const kitCache = new WeakMap<BaseAudioContext, Record<string, AudioBuffer>>();
+export const DAC_RATE = 13300;
+type Gen = (t: number, i: number) => number;
+function synth(sr: number, secs: number, fn: Gen) { const n = Math.floor(sr * secs), d = new Float32Array(n); for (let i = 0; i < n; i++) d[i] = fn(i / sr, i); return d; }
+function onePoleHP(d: Float32Array, sr: number, fc: number) { const a = 1 / (1 + 2 * Math.PI * fc / sr); let px = 0, py = 0; for (let i = 0; i < d.length; i++) { const y = a * (py + d[i] - px); px = d[i]; py = y; d[i] = y; } return d; }
+function onePoleLP(d: Float32Array, sr: number, fc: number) { const k = 1 - Math.exp(-2 * Math.PI * fc / sr); let y = 0; for (let i = 0; i < d.length; i++) { y += k * (d[i] - y); d[i] = y; } return d; }
+/** Heavy compression + saturation, then Genesis DAC: sample-and-hold at DAC_RATE, 8-bit. */
+function genesisPCM(ctx: BaseAudioContext, d: Float32Array, drive = 2.2) {
+  let pk = 1e-6; for (const x of d) pk = Math.max(pk, Math.abs(x));
+  const sr = ctx.sampleRate, hold = sr / DAC_RATE, b = ctx.createBuffer(1, d.length, sr), o = b.getChannelData(0);
+  let env = 0, v = 0, next = 0;
+  for (let i = 0; i < d.length; i++) {
+    let x = d[i] / pk; const ax = Math.abs(x); env = ax > env ? ax : env * 0.9995; // fast-attack slow-release compressor
+    x = x / Math.max(0.35, env) * 0.9; x = Math.tanh(x * drive) / Math.tanh(drive);
+    if (i >= next) { v = Math.round(x * 127) / 127; next += hold; } o[i] = v;
+  }
+  return b;
+}
+const noise = () => Math.random() * 2 - 1;
+const metal = (t: number) => { let s = 0; for (const f of [205.3, 304.4, 369.6, 522.7, 540, 800]) s += Math.sign(Math.sin(2 * Math.PI * f * 2.1 * t)); return s / 6; }; // 808-style square cluster
 export function drumKit(ctx: BaseAudioContext) {
   let kit = kitCache.get(ctx); if (kit) return kit;
-  const sr = ctx.sampleRate, DAC = 13300;
-  const make = (secs: number, fn: (t: number) => number) => {
-    const n = Math.floor(sr * secs), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0), hold = Math.max(1, Math.round(sr / DAC));
-    let v = 0; for (let i = 0; i < n; i++) { if (i % hold === 0) { v = Math.max(-1, Math.min(1, fn(i / sr))); v = Math.round(v * 127) / 127; } d[i] = v; }
-    return b;
-  };
-  let ph = 0, last = 0;
-  const kick = make(0.32, t => { const f = 50 + 140 * Math.exp(-t * 28); ph += 2 * Math.PI * f / sr; return Math.sin(ph) * Math.exp(-t * 9) * 1.3 + (t < 0.004 ? (Math.random() - 0.5) : 0); });
-  ph = 0;
-  const snare = make(0.24, t => { ph += 2 * Math.PI * 190 / sr; const n = Math.random() * 2 - 1; return (Math.sin(ph) * Math.exp(-t * 30) * 0.7 + n * Math.exp(-t * 14) * 0.8); });
-  const hat = make(0.06, t => { const n = Math.random() * 2 - 1, h = n - last; last = n; return h * 0.6 * Math.exp(-t * 70); });
-  const ohat = make(0.25, t => { const n = Math.random() * 2 - 1, h = n - last; last = n; return h * 0.5 * Math.exp(-t * 12); });
-  const crash = make(1.2, t => { const n = Math.random() * 2 - 1, h = n - last * 0.5; last = n; return h * 0.6 * Math.exp(-t * 3.2); });
-  ph = 0;
-  const tom = make(0.3, t => { const f = 90 + 120 * Math.exp(-t * 14); ph += 2 * Math.PI * f / sr; return Math.sin(ph) * Math.exp(-t * 8); });
-  kit = { k: kick, s: snare, h: hat, o: ohat, c: crash, t: tom }; kitCache.set(ctx, kit); return kit;
+  const sr = ctx.sampleRate;
+  let ph = 0;
+  const kick = synth(sr, 0.34, t => { const f = 48 + 190 * Math.exp(-t * 32); ph += 2 * Math.PI * f / sr;
+    const click = t < 0.006 ? (noise() * 0.6 + Math.sin(2 * Math.PI * 2200 * t)) * (1 - t / 0.006) : 0;
+    return Math.sin(ph) * Math.exp(-t * 7.5) * 1.2 + click; });
+  ph = 0; let ph2 = 0;
+  const snN = onePoleLP(onePoleHP(synth(sr, 0.28, t => noise() * (Math.exp(-t * 16) * 0.9 + 0.1 * Math.exp(-t * 5))), sr, 900), sr, 7000);
+  const snare = synth(sr, 0.28, (t, i) => { ph += 2 * Math.PI * (185 * (1 + 0.3 * Math.exp(-t * 60))) / sr; ph2 += 2 * Math.PI * 330 / sr;
+    return (Math.sin(ph) * 0.8 + Math.sin(ph2) * 0.35) * Math.exp(-t * 22) + snN[i] * 1.1; });
+  const hatN = onePoleHP(synth(sr, 0.07, t => (metal(t) * 0.7 + noise() * 0.5)), sr, 6500);
+  const hat = synth(sr, 0.07, (t, i) => hatN[i] * Math.exp(-t * 60));
+  const ohN = onePoleHP(synth(sr, 0.32, t => (metal(t) * 0.7 + noise() * 0.5)), sr, 6000);
+  const ohat = synth(sr, 0.32, (t, i) => ohN[i] * Math.exp(-t * 9));
+  const crN = onePoleHP(synth(sr, 1.3, t => metal(t * 1.3) * 0.5 + noise() * 0.7), sr, 3500);
+  const crash = synth(sr, 1.3, (t, i) => crN[i] * (Math.exp(-t * 2.6) + (t < 0.01 ? 0.5 : 0)));
+  const tom = (f0: number) => { let p = 0; return synth(sr, 0.36, t => { const f = f0 * (1 + 0.6 * Math.exp(-t * 18)); p += 2 * Math.PI * f / sr; return Math.sin(p) * Math.exp(-t * 7) + (t < 0.004 ? noise() * 0.5 : 0); }); };
+  const clN = onePoleLP(onePoleHP(synth(sr, 0.25, () => noise()), sr, 1000), sr, 5000);
+  const clap = synth(sr, 0.25, (t, i) => { const bursts = [0, 0.011, 0.022].some(b => t >= b && t < b + 0.008) ? 1 : 0; return clN[i] * (bursts * 1.2 + (t > 0.022 ? Math.exp(-(t - 0.022) * 18) : 0)); });
+  const raw: Record<string, [Float32Array, number]> = { k: [kick, 2.6], s: [snare, 2.4], h: [hat, 1.6], o: [ohat, 1.6], c: [crash, 1.8], t: [tom(95), 2.2], u: [tom(150), 2.2], p: [clap, 2.4] };
+  kit = {}; for (const k in raw) kit[k] = genesisPCM(ctx, raw[k][0], raw[k][1]);
+  (kit as any).__raw = raw; kitCache.set(ctx, kit); return kit;
 }
+/** Layered hits ("k+h") are premixed into one PCM sample, like a sound driver would, since the DAC is mono. */
+function kitSample(ctx: BaseAudioContext, name: string) {
+  const kit = drumKit(ctx); if (kit[name]) return kit[name];
+  const raw = (kit as any).__raw as Record<string, [Float32Array, number]>; const parts = name.split("+").filter(p => raw[p]); if (!parts.length) return null;
+  const len = Math.max(...parts.map(p => raw[p][0].length)), mix = new Float32Array(len);
+  for (const p of parts) { const d = raw[p][0]; let pk = 1e-6; for (const x of d) pk = Math.max(pk, Math.abs(x)); const w = p === "h" || p === "o" ? 0.45 : 1; for (let i = 0; i < d.length; i++) mix[i] += d[i] / pk * w; }
+  kit[name] = genesisPCM(ctx, mix, 2.6); return kit[name];
+}
+const dacVoice = new WeakMap<AudioNode, { src: AudioBufferSourceNode; g: GainNode; vol: number }>();
+/** FM channel 6 in DAC mode: one sample at a time; a new hit cuts the previous one (2 ms fade). */
 export function playDAC(ctx: BaseAudioContext, dest: AudioNode, name: string, t: number, vol: number, rate = 1) {
-  const b = drumKit(ctx)[name]; if (!b) return;
-  const s = ctx.createBufferSource(), g = ctx.createGain(); s.buffer = b; s.playbackRate.value = rate; g.gain.value = vol;
-  s.connect(g); g.connect(dest); s.start(t);
+  const b = kitSample(ctx, name); if (!b) return;
+  const prev = dacVoice.get(dest); if (prev) { prev.g.gain.setValueAtTime(prev.vol, t); prev.g.gain.linearRampToValueAtTime(0, t + 0.002); prev.src.stop(t + 0.003); }
+  const s = ctx.createBufferSource(), g = ctx.createGain(); s.buffer = b; s.playbackRate.value = rate; g.gain.setValueAtTime(vol, t);
+  s.connect(g); g.connect(dest); s.start(t); s.stop(t + b.duration / rate + 0.01); dacVoice.set(dest, { src: s, g, vol });
 }
 
 /** Output stage: gentle 9-bit-ish quantiser + band limit for that slightly gritty Genesis DAC/amp character. */

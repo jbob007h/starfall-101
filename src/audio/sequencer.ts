@@ -60,9 +60,9 @@ export class Sequencer {
     const bus = this.buses[ch.name], gate = ch.gate ?? 0.92;
     for (const ev of parseLine(line)) {
       const t = t0 + ev.row * row, dur = ev.len * row * gate;
+      if (ch.type === "dac") { playDAC(this.ctx, bus, ev.notes.join("+"), t, ev.vel); continue; } // mono DAC: layers premixed
       for (const n of ev.notes) {
-        if (ch.type === "dac") playDAC(this.ctx, bus, n, t, ev.vel);
-        else if (ch.type === "noise") playNoise(this.ctx, bus, t, ev.vel, n === "o" ? "ohat" : "hat", n === "p");
+        if (ch.type === "noise") playNoise(this.ctx, bus, t, ev.vel, n === "o" ? "ohat" : "hat", n === "p");
         else { const m = noteMidi(n); if (m < 0) continue;
           if (ch.type === "fm") playFM(this.ctx, bus, this.song.patches[patch!], midiHz(m), t, dur, ev.vel);
           else playPSG(this.ctx, bus, midiHz(m), t, dur, ev.vel, ch.env); }

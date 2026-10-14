@@ -78,8 +78,8 @@ export class Audio {
     [0, 4, 7, 12].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.2, "square", 0.12, 0, t + 0.6 + i * 0.06)); }
   // ---- Music: Genesis-style FM tracker (see genesis.ts / sequencer.ts / songs.ts) ----
   seq: Sequencer | null = null; private timer2 = 0; duel = false;
-  /** 0..4 = stage by players remaining (101-75, 75-50, 50-25, 25-10, final 10 = boss tune). Applied on the next bar line. */
-  setTier(t: number) { this.pendingTier = t; if (this.seq) { this.seq.pending = Math.max(0, Math.min(SONG.stages.length - 1, t)); this.seq.bpmBoost = this.duel ? 8 : 0; } }
+  /** 0..4 = stage by players remaining (101-75, 75-50, 50-25, 25-10, final 10 = boss theme); duel => stage 5. Applied on the next bar line. */
+  setTier(t: number) { this.pendingTier = t; if (this.seq) { this.seq.pending = this.duel ? 5 : Math.max(0, Math.min(4, t)); } }
   startMusic() {
     const c = this.ctx; if (!c) return;
     if (!this.seq) this.seq = new Sequencer(c, genesisOutput(c, this.musBus), SONG);
@@ -101,7 +101,7 @@ export class Audio {
 export async function renderMusicPreview(stage: number, secs: number, sr = 44100): Promise<ArrayBuffer> {
   const oc = new OfflineAudioContext(2, Math.floor(sr * secs), sr);
   const bus = oc.createGain(); bus.gain.value = 0.5; bus.connect(oc.destination);
-  const seq = new Sequencer(oc, genesisOutput(oc, bus), SONG); seq.pending = stage; seq.bpmBoost = stage >= 5 ? 8 : 0; seq.pending = Math.min(stage, SONG.stages.length - 1);
+  const seq = new Sequencer(oc, genesisOutput(oc, bus), SONG); seq.pending = Math.min(stage, SONG.stages.length - 1);
   seq.start(0.05); seq.scheduleUntil(secs);
   const buf = await oc.startRendering();
   const n = buf.length, out = new DataView(new ArrayBuffer(44 + n * 4)), w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
