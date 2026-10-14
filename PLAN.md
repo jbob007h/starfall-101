@@ -9,11 +9,11 @@ Format: 101-player battle royale vertical shoot-em-up, you vs 100 opponents
 2. Every kill starts or refreshes a short streak timer.
 3. Kills of the same color as your current chain add more to it than off-color kills.
 4. Wiping out a full formation before the timer runs out makes the chain eligible to cash in.
-5. There is no manual cash-in button: attacks send automatically. When the streak timer expires while an attack is armed (a full formation was cleared), the attack is sent instead of being lost. When the chain reaches the highest tier (mini-boss threshold, 25), it is sent immediately and the chain resets. If the timer expires with nothing armed, the chain is lost.
+5. There is no manual cash-in button: attacks send automatically. When the streak timer expires while an attack is armed (a full formation was cleared), the attack is sent instead of being lost. When the chain reaches the highest tier (mini-boss threshold, 40; bullet wave starts at 15), it is sent immediately and the chain resets. If the timer expires with nothing armed, the chain is lost.
 5b. The attack goes to your target. Chain size sets the attack tier:
-   - Small chain: sends extra enemies into the rival's field
-   - Big chain: sends a bullet-hell wave
-   - Huge chain: sends a mini-boss
+   - Chain 1-14: sends extra enemies into the rival's field
+   - Chain 15-39: sends a bullet-hell wave
+   - Chain 40: instantly sends a mini-boss
 6. Risk/reward: bank a small attack now, or keep the timer alive across several formations for a bigger payoff. Push past cleared formations to grow the armed attack; if the timer runs out while armed it sends, otherwise the chain is lost.
 
 ## Targeting
@@ -31,8 +31,8 @@ In-run drops:
 - Bomb: clears the screen but resets the chain timer.
 - Chain freeze: pauses the streak timer for a few seconds.
 - Shield: blocks one hit or one incoming attack.
-- Lightning: for ~6s the ship auto-fires chain-lightning every ~0.2s at the nearest enemy, jumping to 2-3 more (works without holding fire; kills count toward chains). Timer shown in the bottom strip.
-- Bomb stock is capped at 5.
+- Lightning: for 5s the ship auto-fires chain-lightning every 0.25s at the nearest enemy, jumping to 2 more (works without holding fire; kills count toward chains). Timer shown in the bottom strip.
+- Bomb stock is capped at 5. Picking up a Bomb power-up at 5 bombs triggers a TRIPLE BOMB instead: three rapid staggered screen-clearing blasts (~3x bomb damage to mini-bosses), costs no held bombs, and does NOT reset the chain (it refreshes the chain timer) as a reward. Its kills don't add to the chain.
 - Drop rate: each normal kill has a 6% chance to drop a power-up; type is a weighted pick: Weapon Up 30%, Bomb 13%, Shield 19%, Chain Freeze 19%, Lightning 19%. (Mini-boss kills always drop one random power-up.)
 
 Regular enemies (formation and sent) are 11px-wide pixel sprites with matching ~7x6 hitboxes (20% larger than v1).
@@ -42,11 +42,11 @@ The sender's side (sim/server) picks a design id per attack; designs unlock with
 0. SAUCER: side-to-side; rings, spirals, aimed fans. Hit anywhere.
 1. SERPENT: weaving head with an armored 8-segment body trail; only the head is weak; body fires aimed shots, head fires fans.
 2. FORTRESS: wide hull with two turrets shielding the core; destroy both turrets to expose the core; laser walls with a gap, then a berserk spiral.
-3. PHANTOM: teleports every ~3s (outline warning); only vulnerable while its eye is open; ring burst + rotating 4-arm stream.
+3. PHANTOM (unlocks after ~3:20 or attack power 60+): teleports every ~3s (outline warning); only vulnerable while its eye is open; ring burst + rotating 4-arm stream.
 
 ## Attack feedback
-- Sending: "BULLET WAVE SENT!" + target name, launch whoosh + tiered chime, no screen shake.
-- Receiving: "INCOMING BULLET WAVE!" + sender name, INCOMING arrows, two-tone klaxon (more pulses for bigger tiers).
+- Sending: "BULLET WAVE SENT!" + target name, launch whoosh + tiered chime, no screen shake and no hitstop/pause (also none when an attack becomes armed).
+- Receiving: INCOMING text only during the warning ("INCOMING BULLET WAVE!" + sender name, INCOMING edge arrows); no second popup at spawn, two-tone klaxon (more pulses for bigger tiers).
 
 ## Design pillar: easy to pick up, high skill ceiling
 Goal: a casual player survives a few minutes; experts have lots of room to master.
@@ -57,7 +57,7 @@ Casual-friendly floor:
 - Fire by holding a button (Z or Space); holding it fires at a steady rate. Releasing lets you hold enemies alive to set up chains.
 - Opening ~90s is calm: slow bullets, small formations, and incoming attacks are softened early.
 - Default targeting is Random, so new players never have to touch it.
-- Enemies drop dots that heal and charge bombs, so mistakes are recoverable.
+- Enemies drop dots: +10 points each and they speed up health regen (-0.4s on the regen timer), so mistakes are recoverable. Dots do not give bombs; bombs come only from Bomb power-ups and mini-boss drops.
 
 High skill ceiling:
 - Chain & Cash-in risk/reward: when to bank vs. push for a mini-boss.
@@ -112,7 +112,7 @@ Juice:
 
 ## Tech stack
 - HTML + TypeScript + Canvas 2D, matching the existing Pac-Man 99-style project so code can be shared.
-- Pixel-art rendering at a low internal resolution scaled up with smoothing off.
+- Pixel-art rendering at 640x360 to an offscreen canvas, presented on a display canvas sized to window x devicePixelRatio: nearest-neighbor integer pre-upscale, then a slight final fit to the largest aspect-correct size (fractional allowed), black letterbox; refits on resize and DPR/zoom change.
 - Web Audio for SFX and music.
 - Networking: the game talks only to a `Transport` interface (src/net.ts) with events lobbyJoin / lobbyLeave / lobbyCountdown / matchStart (player list) / attack / state / hit / ko / matchEnd, and calls joinLobby, leaveLobby, sendAttack, sendState, sendKO, tick.
 - Online: `WebSocketTransport` + Node server (server/index.ts, `ws`, same port as the static client; deploy on Render free tier via render.yaml). Server is authoritative for lobby (start at 101 humans, ~20s timeout, or all humans vote Start; bots fill empty slots), slot numbers, attack routing (sent immediately; the projectile is visual only), bot simulation (shared src/sim.ts MatchSim), KOs/placements/KO credit/badges, match end; disconnected humans are KO'd.

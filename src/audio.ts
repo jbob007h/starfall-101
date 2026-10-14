@@ -70,6 +70,9 @@ export class Audio {
   }
   zap() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(0.08, 0.18, 3500, t); this.tone(rnd(1400, 2200), 0.07, "sawtooth", 0.06, 300, t); this.noiseHit(0.03, 0.12, 6000, t + 0.04); }
   lightning() { const c = this.ctx; if (!c) return; const t = c.currentTime; for (let i = 0; i < 6; i++) this.noiseHit(0.04, 0.2, 4000, t + i * 0.05); [0, 7, 12, 19].forEach((s, i) => this.tone(880 * Math.pow(2, s / 12), 0.1, "square", 0.08, 0, t + 0.3 + i * 0.05)); }
+  tripleBomb() { const c = this.ctx; if (!c) return; const t = c.currentTime;
+    for (let i = 0; i < 3; i++) { this.noiseHit(0.9, 0.6, 50, t + i * 0.18); this.tone(140 - i * 25, 0.9, "sawtooth", 0.3, 25, t + i * 0.18); this.tone(70, 0.6, "sine", 0.6, 30, t + i * 0.18); }
+    [0, 4, 7, 12].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.2, "square", 0.12, 0, t + 0.6 + i * 0.06)); }
   // ---- Music ----
   setTier(t: number) { this.pendingTier = t; }
   startMusic() { if (!this.ctx || this.playing) return; this.playing = true; this.step = 0; this.nextTime = this.ctx.currentTime + 0.1; this.timer = window.setInterval(() => this.schedule(), 25); }

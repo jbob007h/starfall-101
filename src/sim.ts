@@ -16,7 +16,7 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 export const BOSS_VARIANTS = 4; // 0 SAUCER, 1 SERPENT, 2 FORTRESS, 3 PHANTOM
 /** Mini-boss design for a sent attack: designs unlock with match stage / attack power, newest favored. */
 export function pickBossVariant(power: number, time: number) {
-  const unlocked = Math.min(BOSS_VARIANTS, 2 + (time > 120 || power >= 30 ? 1 : 0) + (time > 200 || power >= 40 ? 1 : 0));
+  const unlocked = Math.min(BOSS_VARIANTS, 2 + (time > 120 || power >= 50 ? 1 : 0) + (time > 200 || power >= 60 ? 1 : 0));
   return Math.random() < 0.4 ? unlocked - 1 : Math.floor(Math.random() * unlocked);
 }
 export class MatchSim {
@@ -32,7 +32,7 @@ export class MatchSim {
   /** Human `from` cashed in on `to`. Bots take damage here; humans get the attack forwarded. */
   humanAttack(from: number, to: number, tier: Tier, power: number) {
     const t = this.slots[to], f = this.slots[from]; if (!t || !t.alive || !f || !f.alive || this.over) return;
-    if (t.ai) { this.damage(t, [1, 2, 3][tier] + (power > 30 ? 1 : 0), from); if (Math.random() < 0.5) t.target = from; }
+    if (t.ai) { this.damage(t, [1, 2, 3][tier] + (power > 50 ? 1 : 0), from); if (Math.random() < 0.5) t.target = from; }
     else this.out.attack(from, to, tier, power, pickBossVariant(power, this.time));
   }
   humanState(id: number, hp: number, badges: number, targets: number[], armed: boolean) {
@@ -84,7 +84,8 @@ export class MatchSim {
           b.sendCd = rnd(14, 26) / Math.sqrt(ramp) * (n <= 2 ? 0.5 : 1);
           let tier: Tier = 0; const pw = (calm ? 3 : 4) + Math.floor(rnd(0, 10) * b.skill * ramp) + b.badges;
           if (!calm) { const roll = Math.random() * b.skill * ramp; tier = roll > 1.1 ? 2 : roll > 0.55 ? 1 : 0; }
-          const p2 = calm ? Math.min(pw, 5) : pw; this.out.attack(b.id, t.id, tier, p2, pickBossVariant(p2, this.time));
+          // bot attack power respects the tier thresholds (wave 15+, mini-boss 40+)
+          const p2 = calm ? Math.min(pw, 5) : Math.max(pw, [0, 15, 40][tier]); this.out.attack(b.id, t.id, tier, p2, pickBossVariant(p2, this.time));
         }
       }
     }

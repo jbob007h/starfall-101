@@ -48,9 +48,9 @@ while (Date.now() - t0 < 32000) {
 const s = await p.evaluate(() => { const g = window.__game; return { state: g.state, time: g.time, hp: g.hp, chain: g.chain, score: g.score, alive: g.aliveAI, enemies: g.enemies.length, projs: g.projs.length, warns: g.warns.length, fps: 0 }; });
 console.log(JSON.stringify(s));
 // push to an action-heavy moment: force time forward via fast-forward of simulation
-await p.evaluate(() => { const g = window.__game;  g.time = 200; g.hp = 3; g.inv = 99; for (let i = 0; i < 400; i++) g.update(1/60); g.chain = 14; g.eligible = true; g.cashIn(); g.hitstop = 0; });
+await p.evaluate(() => { const g = window.__game;  g.time = 200; g.hp = 3; g.inv = 99; for (let i = 0; i < 400; i++) g.update(1/60); g.chain = 20; g.eligible = true; g.cashIn(); g.hitstop = 0; });
 await p.waitForTimeout(400);
-await p.evaluate(() => { const g = window.__game; g.chain = 30; g.eligible = true; g.cashIn(); g.hitstop = 0; });
+await p.evaluate(() => { const g = window.__game; g.chain = 45; g.eligible = true; g.cashIn(); g.hitstop = 0; });
 await p.evaluate(() => { const g = window.__game; g.warns.push({ t: 0.01, tier: 2, power: 20, sender: 4, x: 100 }, { t: 0.01, tier: 0, power: 12, sender: 7, x: 60 }); });
 await p.waitForTimeout(2500);
 await p.evaluate(() => { const g = window.__game; g.chain = 12; g.eligible = true; g.chainT = 0.01; g.hitstop = 0; });
@@ -73,7 +73,7 @@ await p.evaluate(() => { const g = window.__game; g.enemies = g.enemies.filter(e
 await p.waitForTimeout(900);
 const zap0 = await p.evaluate(() => [window.__game.zapT.toFixed(1), window.__game.bolts.length, window.__game.score]);
 await p.evaluate(() => { const g = window.__game; g.spawnFormation(8, 2, 3, false, -1); g.spawnFormation(6, 3, 0, false, -1); for (const e of g.enemies) if (!e.boss) e.hp = 30; g.zapT = 4;
-  g.chain = 14; g.eligible = true; g.hitstop = 0; g.cashIn(); g.hitstop = 0; });
+  g.chain = 20; g.eligible = true; g.hitstop = 0; g.cashIn(); g.hitstop = 0; });
 await p.waitForTimeout(700);
 await p.evaluate(() => { const g = window.__game; g.onNet({ type: "attack", from: 7, to: -1, tier: 1, power: 12, variant: 0 }); for (const q of g.projs) if (!q.out) q.t = 0.99; });
 await p.waitForTimeout(120);
@@ -81,6 +81,9 @@ await p.screenshot({ path: "screenshot8.png" });
 console.log("lightning [t, bolts, score]", zap0, "texts:", await p.evaluate(() => window.__game.popups.map(q => q.text).join(" | ")));
 await p.waitForTimeout(1500);
 console.log("incoming boss variant spawned:", await p.evaluate(() => window.__game.enemies.filter(e => e.boss).map(e => e.bv)));
+await p.evaluate(() => { const g = window.__game; g.bombs = 5; g.chain = 8; g.chainT = 2; g.spawnFormation(6, 1, 3, false, -1); g.collect({ kind: "B", x: 0, y: 0, vx: 0, vy: 0, t: 0 }); });
+await p.waitForTimeout(150); await p.screenshot({ path: "triple_bomb.png" }); await p.waitForTimeout(600);
+console.log("triple bomb [bombs, chain>0, queue]:", await p.evaluate(() => { const g = window.__game; return [g.bombs, g.chain > 0, g.tripleQ.length]; }));
 console.log("missing glyphs:", await p.evaluate(() => [...window.__missingGlyphs].join("")));
 const fps = await p.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { n++; if (performance.now() - t < 1000) requestAnimationFrame(f); else r(n); }; requestAnimationFrame(f); }));
 console.log("fps", fps, "errors:", errs);

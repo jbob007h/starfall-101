@@ -11,13 +11,36 @@ const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
 const SENT = 4; const SENT_COL = "#ff5050";
 const MAG = "#ff3cc8", CYA = "#3cf0ff", YEL = "#ffe040", WHT = "#ffffff", DIM = "#2a1440";
 const CELL_W = 16, CELL_H = 32;
+/** Attack tier thresholds (chain size): >= WAVE_AT sends a bullet wave, reaching BOSS_AT auto-sends a mini-boss. */
+const WAVE_AT = 15, BOSS_AT = 40;
 const MODES = ["RANDOM", "KOS", "ATTACKERS", "BADGES"];
 
-const canvas = document.getElementById("game") as HTMLCanvasElement;
-canvas.width = W; canvas.height = H;
+// Game renders to a fixed 640x360 offscreen canvas; present() scales it to fill the window (any zoom / DPR).
+const display = document.getElementById("game") as HTMLCanvasElement;
+const dctx = display.getContext("2d")!;
+const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
 const ctx = canvas.getContext("2d")!; ctx.imageSmoothingEnabled = false;
-function fit() { const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H))); canvas.style.width = W * s + "px"; canvas.style.height = H * s + "px"; }
-addEventListener("resize", fit); fit();
+const mid = document.createElement("canvas"); const mctx = mid.getContext("2d")!; // integer pre-upscale
+const view = { scale: 1, x: 0, y: 0, w: W, h: H, k: 1, dpr: 1 };
+function fit() {
+  const dpr = window.devicePixelRatio || 1, cw = Math.max(1, Math.round(innerWidth * dpr)), ch = Math.max(1, Math.round(innerHeight * dpr));
+  display.style.width = innerWidth + "px"; display.style.height = innerHeight + "px";
+  if (display.width !== cw) display.width = cw; if (display.height !== ch) display.height = ch;
+  const sc = Math.min(cw / W, ch / H), w = Math.round(W * sc), h = Math.round(H * sc);
+  const k = Math.max(1, Math.ceil(sc)); if (mid.width !== W * k) { mid.width = W * k; mid.height = H * k; }
+  Object.assign(view, { scale: sc, w, h, x: Math.floor((cw - w) / 2), y: Math.floor((ch - h) / 2), k, dpr });
+  (window as any).__view = { ...view, cw, ch, fill: Math.max(w / cw, h / ch) };
+}
+function present() {
+  mctx.imageSmoothingEnabled = false; mctx.drawImage(canvas, 0, 0, mid.width, mid.height); // crisp integer upscale
+  dctx.fillStyle = "#000"; dctx.fillRect(0, 0, display.width, display.height); // letterbox
+  dctx.imageSmoothingEnabled = view.k !== view.scale; dctx.imageSmoothingQuality = "high"; // slight final fit only
+  dctx.drawImage(mid, view.x, view.y, view.w, view.h);
+}
+let dprMq: MediaQueryList | null = null;
+function watchDpr() { dprMq?.removeEventListener("change", onDpr); dprMq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`); dprMq.addEventListener("change", onDpr); }
+function onDpr() { fit(); watchDpr(); }
+addEventListener("resize", fit); fit(); watchDpr();
 
 const audio = new Audio();
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -105,13 +128,13 @@ class Game {
   score = 0; badges = 0; starBoost = 0; kos = 0; place = 0; mode = 0; targets: number[] = []; randTarget = -1; randCd = 0;
   chain = 0; chainCol = -1; chainT = 0; chainMax = 2.6; eligible = false; freeze = 0; chainPulse = 0; grazes = 0; bestChain = 0;
   formCd = 2; formId = 0; shake = 0; hitstop = 0; slow = 0; flash = 0; flashCol = WHT; duel = false; dead = false; endT = 0; paused = false;
-  lowWarn = 0; zapT = 0; zapCd = 0; bolts: { pts: { x: number; y: number }[]; life: number }[] = []; bombFx = 0; titleT = 0;
+  lowWarn = 0; tripleQ: number[] = []; bombCol = MAG; bombAt: { x: number; y: number } | null = null; zapT = 0; zapCd = 0; bolts: { pts: { x: number; y: number }[]; life: number }[] = []; bombFx = 0; titleT = 0;
   constructor() { for (let i = 0; i < 90; i++) this.bgStars.push({ x: Math.random() * PW, y: Math.random() * PH, z: rnd(0.2, 1) }); }
 
   reset(players: PlayerInfo[]) {
     Object.assign(this, { time: 0, enemies: [], forms: [], pb: [], eb: [], items: [], parts: [], uiParts: [], projs: [], popups: [], warns: [], waves: [], streaks: [],
       px: PW / 2, py: PH - 40, hp: 3, inv: 2, regen: 20, weapon: 0, shield: false, bombs: 2, dots: 0, score: 0, badges: 0, starBoost: 0, kos: 0, place: 0,
-      zapT: 0, zapCd: 0, bolts: [], chain: 0, chainCol: -1, chainT: 0, eligible: false, freeze: 0, grazes: 0, bestChain: 0, formCd: 2, shake: 0, hitstop: 0, slow: 0, duel: false, dead: false, randTarget: -1, randCd: 0, endT: 0, bombFx: 0 });
+      zapT: 0, zapCd: 0, bolts: [], tripleQ: [], bombAt: null, chain: 0, chainCol: -1, chainT: 0, eligible: false, freeze: 0, grazes: 0, bestChain: 0, formCd: 2, shake: 0, hitstop: 0, slow: 0, duel: false, dead: false, randTarget: -1, randCd: 0, endT: 0, bombFx: 0 });
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
       this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0 }); }
@@ -214,7 +237,7 @@ class Game {
       audio.shoot();
     }
     if (hit("KeyX", "PadBomb")) this.bomb();
-    this.updateLightning(dt);
+    this.updateLightning(dt); this.updateTriple(dt);
     if (this.hp < 3) { this.regen -= dt; if (this.regen <= 0) { this.hp++; this.regen = 20; this.popup("+1 HP", this.px, this.py - 16, CYA, 1); audio.power(); } } else this.regen = 20;
     // engine particles
     if (Math.random() < 0.7) this.parts.push({ x: this.px + rnd(-1, 1), y: this.py + 7, vx: rnd(-10, 10), vy: rnd(60, 120), life: 0.2, max: 0.2, col: Math.random() < 0.5 ? CYA : WHT, s: 1 });
@@ -224,10 +247,10 @@ class Game {
   updateLightning(dt: number) {
     for (const b of this.bolts) b.life -= dt; this.bolts = this.bolts.filter(b => b.life > 0);
     if (this.zapT <= 0 || this.dead) return;
-    this.zapT -= dt; this.zapCd -= dt; if (this.zapCd > 0) return; this.zapCd = 0.2;
+    this.zapT -= dt; this.zapCd -= dt; if (this.zapCd > 0) return; this.zapCd = 0.25;
     const live = (e: Enemy) => !e.dead && (e.boss || (e.t >= e.delay && e.entered)) && e.x > 0 && e.x < PW && e.y > 0 && e.y < PH;
     const pool = this.enemies.filter(live); if (!pool.length) return;
-    let from = { x: this.px, y: this.py - 6 }; const hitSet = new Set<Enemy>(); const jumps = ri(3, 4); // first target + 2-3 jumps
+    let from = { x: this.px, y: this.py - 6 }; const hitSet = new Set<Enemy>(); const jumps = 3; // first target + 2 jumps
     for (let j = 0; j < jumps; j++) {
       let best: Enemy | null = null, bd = j === 0 ? 1e9 : 70;
       for (const e of pool) { if (hitSet.has(e)) continue; const d = Math.hypot(e.x - from.x, e.y - from.y); if (d < bd) { bd = d; best = e; } }
@@ -242,8 +265,26 @@ class Game {
     }
     audio.zap();
   }
+  /** Bomb pickup at max stock: three staggered full-screen blasts (~3x bomb). Free, and keeps your chain (reward). */
+  tripleBomb() {
+    this.tripleQ = [0, 0.18, 0.36]; audio.tripleBomb(); this.popup("TRIPLE BOMB!", PW / 2, PH / 2 - 10, YEL, 4); this.inv = Math.max(this.inv, 1.5);
+  }
+  updateTriple(dt: number) {
+    if (!this.tripleQ.length) return;
+    this.tripleQ = this.tripleQ.map(t => t - dt);
+    while (this.tripleQ.length && this.tripleQ[0] <= 0) {
+      this.tripleQ.shift(); const k = 3 - this.tripleQ.length; const col = [YEL, MAG, CYA][k - 1];
+      this.shake = 10 + k * 2; this.flash = 0.35; this.flashCol = col; this.bombFx = 0.6; this.bombCol = col;
+      this.bombAt = { x: k === 1 ? this.px : rnd(40, PW - 40), y: k === 1 ? this.py : rnd(60, PH - 80) };
+      for (const b of this.eb) this.burst(b.x, b.y, b.col, 1, 40); this.eb = [];
+      for (const w of this.waves) w.t = w.dur;
+      for (const e of this.enemies) { if (e.boss) this.bombBoss(e); else { e.hp = 0; this.killEnemy(e, false); } }
+      this.burst(this.bombAt.x, this.bombAt.y, col, 70, 220); this.burst(this.bombAt.x, this.bombAt.y, WHT, 30, 140);
+      if (this.chain > 0) this.chainT = this.chainMax; // chain survives (and is kept alive) through the blasts
+    }
+  }
   bomb() {
-    if (this.bombs <= 0) return; this.bombs--; audio.bomb(); this.shake = 8; this.flash = 0.4; this.flashCol = MAG; this.bombFx = 0.6;
+    if (this.bombs <= 0) return; this.bombs--; audio.bomb(); this.shake = 8; this.flash = 0.4; this.flashCol = MAG; this.bombFx = 0.6; this.bombCol = MAG; this.bombAt = null;
     for (const b of this.eb) this.burst(b.x, b.y, b.col, 1, 30); this.eb = [];
     for (const w of this.waves) w.t = w.dur;
     for (const e of this.enemies) { if (e.boss) { this.bombBoss(e); } else { e.hp = 0; this.killEnemy(e, false); } }
@@ -254,14 +295,14 @@ class Game {
 
   cashIn(force = false) { // attacks send automatically (timer expiry while armed, or max tier)
     if ((!this.eligible && !force) || this.chain <= 0) { return; }
-    const c = this.chain, tier = c < 10 ? 0 : c < 25 ? 1 : 2;
+    const c = this.chain, tier = c < WAVE_AT ? 0 : c < BOSS_AT ? 1 : 2;
     const power = Math.round(c * (1 + 0.1 * this.badges) + this.starBoost);
     const name = ["ENEMY RUSH SENT!", "BULLET WAVE SENT!", "MINI-BOSS SENT!"][tier];
     this.computeTargets();
     const tn = this.targets.length > 1 ? this.targets.length + " ATTACKERS" : (this.rivals[this.targets[0]]?.name || "?");
     this.popup(name, PW / 2, PH / 2 - 40, [CYA, MAG, YEL][tier], 2); this.popup("POWER " + power + " TO " + tn, PW / 2, PH / 2 - 26, WHT, 1);
     for (const id of this.targets) { this.net.sendAttack(id, tier as 0 | 1 | 2, power); const cp = this.cellPos(id); this.projs.push({ sx: PX + this.px, sy: PY + this.py, ex: cp.x + CELL_W / 2, ey: cp.y + CELL_H / 2, t: 0, dur: 0.7, out: true, tier, power, target: id, sender: -1, col: [CYA, MAG, YEL][tier] }); }
-    this.score += power * 500; audio.sent(tier); this.hitstop = 6; this.flash = 0.15; this.flashCol = [CYA, MAG, YEL][tier];
+    this.score += power * 500; audio.sent(tier); this.flash = 0.15; this.flashCol = [CYA, MAG, YEL][tier];
     this.burst(this.px, this.py, YEL, 30, 140);
     this.chain = 0; this.chainCol = -1; this.chainT = 0; this.eligible = false; this.starBoost = 0;
   }
@@ -269,7 +310,7 @@ class Game {
   updateChain(dt: number) {
     this.chainPulse = Math.max(0, this.chainPulse - dt * 4);
     if (this.chain <= 0) return;
-    if (this.chain >= 25) { this.cashIn(true); return; }
+    if (this.chain >= BOSS_AT) { this.cashIn(true); return; }
     if (this.freeze > 0) { this.freeze -= dt; return; }
     this.chainT -= dt;
     if (this.chainT <= 0 && this.eligible) { this.cashIn(); return; }
@@ -330,11 +371,11 @@ class Game {
   }
   // ---------- mini-bosses (variant ids shared with sim/server) ----------
   spawnBoss(v: number, power: number, sender: number) {
-    v = ((v | 0) % 4 + 4) % 4; const hp = 60 + power * 3;
+    v = ((v | 0) % 4 + 4) % 4; const hp = 60 + power * 2;
     const e: Enemy = { x: PW / 2, y: -20, t: 0, delay: 0, path: 0, x0: 0, y0: 0, idx: 0, hp, maxhp: hp, col: SENT, form: -1, fireCd: 1.2, spr: 0, entered: true, dead: false, boss: true, sender, bv: v,
       hist: [], segs: [], cyc: -1, vis: v === 3 ? 0 : 1, eye: false, tx: PW / 2, ty: 60 };
     if (v === 2) { e.tur = [hp * 0.35, hp * 0.35]; e.turMax = hp * 0.35; }
-    this.enemies.push(e); this.popup("INCOMING MINI-BOSS: " + BOSS_NAMES[v] + "!", PW / 2, 30, SENT_COL, 2);
+    this.enemies.push(e); this.popup(BOSS_NAMES[v] + "!", PW / 2, 30, SENT_COL, 2);
     this.popup(["HIT ANYWHERE", "ONLY THE HEAD IS WEAK", "DESTROY TURRETS, THEN CORE", "HIT IT WHEN THE EYE OPENS"][v], PW / 2, 46, "#ff9090", 1);
     return e;
   }
@@ -443,7 +484,7 @@ class Game {
   formClear(f: Formation, e: Enemy) {
     this.chain += 3; this.chainT = this.chainMax; this.chainPulse = 1.5;
     if (!this.eligible) this.popup("ATTACK ARMED!", PW / 2, 40, YEL, 2); else this.popup("FORMATION CLEAR +3", e.x, e.y, YEL, 1);
-    this.eligible = true; this.hitstop = Math.max(this.hitstop, 3); this.shake = 3; audio.power();
+    this.eligible = true; this.shake = 3; audio.power();
     if (f.sent) { this.popup("COUNTER!", e.x, e.y - 10, SENT_COL, 2); this.reflect(f.sender, 0, 4 + f.total); }
   }
   reflect(sender: number, tier: number, power: number) {
@@ -516,12 +557,11 @@ class Game {
   }
   collect(it: Item) {
     switch (it.kind) {
-      case "dot": this.dots++; this.score += 10; this.regen -= 0.4; audio.dot();
-        if (this.dots % 30 === 0 && this.bombs < 5) { this.bombs++; this.popup("+BOMB", this.px, this.py - 14, MAG, 1); } break;
+      case "dot": this.dots++; this.score += 10; this.regen -= 0.4; audio.dot(); break;
       case "W": if (this.weapon < 3) { this.weapon++; this.popup("WEAPON UP!", this.px, this.py - 14, CYA, 1); } else { this.score += 5000; this.popup("MAX 5000", this.px, this.py - 14, CYA, 1); } audio.power(); break;
-      case "B": this.bombs = Math.min(5, this.bombs + 1); this.popup("+BOMB", this.px, this.py - 14, MAG, 1); audio.power(); break;
+      case "B": if (this.bombs >= 5) { this.tripleBomb(); break; } this.bombs = Math.min(5, this.bombs + 1); this.popup("+BOMB", this.px, this.py - 14, MAG, 1); audio.power(); break;
       case "F": this.freeze = 5; this.popup("CHAIN FREEZE!", this.px, this.py - 14, CYA, 1); audio.power(); break;
-      case "L": this.zapT = 6; this.zapCd = 0; this.popup("LIGHTNING!", this.px, this.py - 16, "#c0f8ff", 2); audio.lightning(); this.flash = 0.1; this.flashCol = CYA; break;
+      case "L": this.zapT = 5; this.zapCd = 0; this.popup("LIGHTNING!", this.px, this.py - 16, "#c0f8ff", 2); audio.lightning(); this.flash = 0.1; this.flashCol = CYA; break;
       case "S": this.shield = true; this.popup("SHIELD!", this.px, this.py - 14, CYA, 1); audio.power(); break;
       case "badge": this.badges++; this.popup("BADGE +10% ATK", this.px, this.py - 14, YEL, 1); audio.power(); this.burst(it.x, it.y, YEL, 12); break;
       case "star": this.starBoost += 6; this.popup("STARFALL! +6 POWER", this.px, this.py - 18, YEL, 1); audio.star(); this.flash = 0.12; this.flashCol = YEL; this.burst(it.x, it.y, YEL, 25, 120); break;
@@ -531,7 +571,7 @@ class Game {
   updateWaves(dt: number) {
     for (const w of this.waves) {
       w.t += dt; w.acc += dt;
-      const rate = 0.07 / Math.min(2, 0.6 + w.power / 25);
+      const rate = 0.07 / Math.min(2, 0.6 + w.power / 40);
       while (w.acc > rate && w.t < w.dur) {
         w.acc -= rate; const sp = 55 + this.ramp * 15;
         if (w.pat === 0) { const x = rnd(0, PW); this.eb.push({ x, y: -4, vx: rnd(-10, 10), vy: sp, r: 2, col: SENT_COL }); }
@@ -545,8 +585,8 @@ class Game {
       w.t -= dt;
       if (w.t <= 0) {
         this.flash = 0.12; this.flashCol = SENT_COL; this.shake = Math.max(this.shake, 3);
-        if (w.tier === 0) { this.popup("INCOMING ENEMY RUSH!", PW / 2, 30, SENT_COL, 2); this.spawnFormation(clamp(3 + Math.floor(w.power / 4), 3, 10), SENT, ri(0, 3), true, w.sender); }
-        else if (w.tier === 1) { this.waves.push({ t: 0, dur: 2 + Math.min(3, w.power / 10), power: w.power, acc: 0, pat: ri(0, 1) }); this.popup("INCOMING BULLET WAVE!", PW / 2, 30, SENT_COL, 2); }
+        if (w.tier === 0) { this.spawnFormation(clamp(3 + Math.floor(w.power / 5), 3, 10), SENT, ri(0, 3), true, w.sender); }
+        else if (w.tier === 1) { this.waves.push({ t: 0, dur: 2 + Math.min(3, w.power / 16), power: w.power, acc: 0, pat: ri(0, 1) }); }
         else this.spawnBoss(w.variant ?? 0, w.power, w.sender);
         for (let i = 0; i < 20; i++) this.parts.push({ x: w.x + rnd(-20, 20), y: rnd(0, 30), vx: 0, vy: rnd(20, 80), life: 0.4, max: 0.4, col: SENT_COL, s: 2 });
       }
@@ -572,7 +612,7 @@ class Game {
     // background starfall streak for every KO
     this.streaks.push({ x: rnd(0, PW), y: -10, vx: rnd(-40, 40), vy: rnd(160, 240), life: 2, col: COLORS[v.col], big: false });
     if (killer === -1) {
-      this.popup("K.O.!", PW / 2, PH / 2 + 20, YEL, 3); audio.ko(); this.hitstop = 5; this.shake = 4; this.score += 10000;
+      this.popup("K.O.!", PW / 2, PH / 2 + 20, YEL, 3); audio.ko(); this.shake = 4; this.score += 10000;
       const nb = 1 + Math.floor(v.badges / 2);
       for (let i = 0; i < nb; i++) { this.items.push({ x: rnd(30, PW - 30), y: -10 - i * 10, vx: 0, vy: 40, kind: "badge", t: 0 }); }
       const fromLeft = Math.random() < 0.5; // catchable shooting star
@@ -670,7 +710,7 @@ class Game {
     if (Math.floor(t * 2) % 2 === 0) drawText(ctx, pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH", W / 2, 240, WHT, 2, "center");
     const help = pad.connected ? ["CONTROLLER: L-STICK / D-PAD MOVE   A HOLD FIRE   X HOLD FOCUS   B BOMB", "R-STICK FLICK TARGET: UP RANDOM  RIGHT KOS  DOWN ATTACKERS  LEFT BADGES   START PAUSE",
       ] : ["MOVE: ARROWS / WASD   FIRE: HOLD Z / SPACE   FOCUS: SHIFT   BOMB: X", "TARGET: 1 RANDOM  2 KOS  3 ATTACKERS  4 BADGES    M MUTE   P PAUSE",
-      "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 25 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
+      "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
     help.forEach((l, i) => drawText(ctx, l, W / 2, 280 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
 
@@ -682,7 +722,6 @@ class Game {
     drawText(ctx, "RANK", 8, 10, YEL, 2); drawText(ctx, rk, 52, 8, WHT, 3); drawText(ctx, "/101", 52 + textWidth(rk, 3) + 4, 14, MAG, 2);
     drawText(ctx, "SCORE", 8, 34, CYA, 1); drawText(ctx, String(this.score).padStart(9, "0"), 44, 32, WHT, 2);
     drawText(ctx, "BOMBS", 8, 50, CYA, 1); for (let i = 0; i < this.bombs; i++) { ctx.fillStyle = YEL; ctx.fillRect(44 + i * 11, 48, 7, 7); ctx.fillStyle = "#806000"; ctx.fillRect(46 + i * 11, 50, 3, 3); }
-    drawText(ctx, "DOTS " + (this.dots % 30) + "/30", 110, 50, "#8070b0", 1);
     drawText(ctx, "WEAPON", 8, 64, CYA, 1); for (let i = 0; i < 4; i++) { ctx.fillStyle = i <= this.weapon ? CYA : DIM; ctx.fillRect(44 + i * 9, 63, 7, 5); }
     drawText(ctx, "ATK +" + this.badges * 10 + "%", 110, 64, YEL, 1);
     drawText(ctx, "BADGES", 8, 78, CYA, 1); for (let i = 0; i < Math.min(this.badges, 12); i++) ctx.drawImage(badgeSpr, 44 + i * 9, 76);
@@ -724,20 +763,20 @@ class Game {
     for (let i = 0; i < 3; i++) { const on = i < this.hp; ctx.fillStyle = on ? (this.hp === 1 && Math.floor(this.realT * 6) % 2 ? "#ff2040" : MAG) : DIM; ctx.fillRect(x0 + 5 + i * 13, y + 5, 10, 8); if (on) { ctx.fillStyle = WHT; ctx.fillRect(x0 + 6 + i * 13, y + 6, 3, 2); } }
     if (this.hp < 3) { ctx.fillStyle = DIM; ctx.fillRect(x0 + 5, y + 16, 36, 2); ctx.fillStyle = CYA; ctx.fillRect(x0 + 5, y + 16, Math.round(36 * (1 - this.regen / 20)), 2); }
     if (this.shield) { ctx.strokeStyle = CYA; ctx.strokeRect(x0 + 3.5, y + 3.5, 41, 12); }
-    if (this.zapT > 0) { drawText(ctx, "ZAP", x0 + 5, y + 20, Math.floor(this.realT * 10) % 2 ? WHT : CYA, 1); ctx.fillStyle = DIM; ctx.fillRect(x0 + 19, y + 21, 24, 3); ctx.fillStyle = CYA; ctx.fillRect(x0 + 19, y + 21, Math.round(24 * this.zapT / 6), 3); }
+    if (this.zapT > 0) { drawText(ctx, "ZAP", x0 + 5, y + 20, Math.floor(this.realT * 10) % 2 ? WHT : CYA, 1); ctx.fillStyle = DIM; ctx.fillRect(x0 + 19, y + 21, 24, 3); ctx.fillStyle = CYA; ctx.fillRect(x0 + 19, y + 21, Math.round(24 * this.zapT / 5), 3); }
     const cx = x0 + 50; const cc = this.chainCol >= 0 ? COLORS[this.chainCol] : WHT;
     if (this.chain > 0) {
       const sc = 2 + (this.chainPulse > 0.5 ? 1 : 0);
-      const ncol = this.chain >= 20 ? YEL : this.chain >= 10 ? MAG : cc;
+      const ncol = this.chain >= BOSS_AT * 0.8 ? YEL : this.chain >= WAVE_AT ? MAG : cc;
       drawText(ctx, "x" + this.chain, cx, y + 11 - sc * 2.5, ncol, sc, "left", "#000");
       const f = this.chainT / this.chainMax, low = f < 0.3 && this.freeze <= 0, bx = cx + 34, bw = w - (bx - x0) - 6;
       ctx.fillStyle = DIM; ctx.fillRect(bx, y + 4, bw, 5);
       ctx.fillStyle = this.freeze > 0 ? "#a0e0ff" : low && Math.floor(this.realT * 12) % 2 ? WHT : cc; ctx.fillRect(bx, y + 4, Math.round(bw * f), 5);
-      for (const [th, c] of [[10, MAG], [25, YEL]] as [number, string][]) { const tx = bx + Math.round(bw * th / 25) - 1; ctx.fillStyle = this.chain >= th ? c : "#5040a0"; ctx.fillRect(Math.min(tx, bx + bw - 2), y + 2, 2, 9); }
-      const tier = this.chain < 10 ? "RUSH" : this.chain < 25 ? "WAVE" : "BOSS";
+      for (const [th, c] of [[WAVE_AT, MAG], [BOSS_AT, YEL]] as [number, string][]) { const tx = bx + Math.round(bw * th / BOSS_AT) - 1; ctx.fillStyle = this.chain >= th ? c : "#5040a0"; ctx.fillRect(Math.min(tx, bx + bw - 2), y + 2, 2, 9); }
+      const tier = this.chain < WAVE_AT ? "RUSH" : this.chain < BOSS_AT ? "WAVE" : "BOSS";
       const lab = this.eligible ? "ARMED: " + tier + "  SENDS WHEN TIMER ENDS" : (this.freeze > 0 ? "FROZEN " + this.freeze.toFixed(1) + "  " : "") + "CLEAR A FORMATION TO ARM";
       drawText(ctx, lab, bx, y + 13, this.eligible ? (Math.floor(this.realT * 5) % 2 ? YEL : WHT) : "#8070b0", 1);
-    } else drawText(ctx, "CHAIN: KILL TO START   AT 25: INSTANT MINI-BOSS", cx, y + 9, "#6050a0", 1);
+    } else drawText(ctx, "CHAIN: KILL TO START   15 WAVE   40 MINI-BOSS", cx, y + 9, "#6050a0", 1);
   }
   drawMini(r: Rival, x: number, y: number, big: boolean) {
     const w = CELL_W, h = CELL_H;
@@ -809,7 +848,7 @@ class Game {
     for (const side of [0, 1]) for (let i = 0; i < 6; i++) { const hh = 40 + ((i * 37) % 60), ww = 10 + (i % 3) * 4; const x = side ? PW - ww - (i * 7) % 18 : (i * 7) % 18; const y = PH - hh - ((i * 23) % 30) + 30;
       ctx.fillStyle = "#140828"; ctx.fillRect(x, y, ww, PH - y); ctx.fillStyle = "#2a1050"; ctx.fillRect(x + 1, y, 1, PH - y); if (i % 2) { ctx.fillStyle = MAG; ctx.fillRect(x + ww / 2, y + 6, 1, 1); } }
     for (const s of this.streaks) this.drawStreak(s.x, s.y, s.vx, s.vy, s.col, s.big);
-    if (this.bombFx > 0) { const r = (0.6 - this.bombFx) * 500; ctx.strokeStyle = MAG; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(this.px, this.py, r, 0, 6.283); ctx.stroke(); ctx.lineWidth = 1; }
+    if (this.bombFx > 0) { const r = (0.6 - this.bombFx) * 500, o = this.bombAt || { x: this.px, y: this.py }; ctx.strokeStyle = this.bombCol; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(o.x, o.y, r, 0, 6.283); ctx.stroke(); ctx.lineWidth = 1; }
     // items
     for (const it of this.items) {
       const x = Math.round(it.x), y = Math.round(it.y);
@@ -861,6 +900,6 @@ function loop(now: number) {
   acc += Math.min(0.1, (now - last) / 1000); last = now;
   pollPad();
   while (acc >= STEP) { game.update(STEP); pressed.clear(); acc -= STEP; }
-  game.render(); requestAnimationFrame(loop);
+  game.render(); present(); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

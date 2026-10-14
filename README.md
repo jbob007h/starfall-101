@@ -9,6 +9,8 @@
 Offline: `npm run serve` (static dist/ only), open `/workspace/STARFALL101.html` directly, or add `?offline`.
 URL params: `?name=ACE` (pilot name), `?server=wss://host/ws` (use a specific server), `?offline`.
 
+Display fills the window at any browser zoom/DPR (crisp pixels, letterboxed). `node scale-test.mjs` checks fill at DPR 1-2.
+
 Tests: `node test.mjs` (single player + stubbed gamepad, needs `npm run serve` on :8080);
 `PORT=8090 npm start` then `node mp-test.mjs` (3 headless clients online).
 
@@ -21,9 +23,9 @@ Tests: `node test.mjs` (single player + stubbed gamepad, needs `npm run serve` o
 | Bomb | X | B |
 | Targeting | 1 Random, 2 KOs, 3 Attackers, 4 Badges | Right-stick flick: up / right / down / left |
 | Start / vote start in lobby / pause / restart | Enter, P, R | Start |
-Power-ups: W weapon, B bomb (max 5), F chain freeze, S shield, L lightning (6s auto chain-lightning).
+Dots: +10 points and faster health regen (no bombs). Power-ups: W weapon, B bomb (max 5; picking one up at 5 = free TRIPLE BOMB that keeps your chain), F chain freeze, S shield, L lightning (5s auto chain-lightning).
 Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHANTOM (hit when the eye opens); the design id travels with the attack (`variant`) online.
-Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 25 (mini-boss).
+Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 40 (mini-boss); bullet wave tier starts at chain 15.
 
 ## Networking
 `src/net.ts` defines `Transport` + `NetEvent` (lobbyJoin/Leave/Countdown, matchStart, attack, state, hit, ko, matchEnd, disconnected).
