@@ -1,20 +1,20 @@
 // Rebindable input: keyboard codes (KeyboardEvent.code) and controller codes
 // ("B<n>" standard-mapping button, "A<n>+" / "A<n>-" axis direction). Saved in localStorage.
-export type Act = "up" | "down" | "left" | "right" | "fire" | "focus" | "bomb" | "tgt0" | "tgt1" | "tgt2" | "tgt3" | "pause" | "mute" | "crt" | "lowfx";
+export type Act = "up" | "down" | "left" | "right" | "fire" | "focus" | "bomb" | "tgt0" | "tgt1" | "tgt2" | "tgt3" | "pause" | "mute" | "crt" | "lowfx" | "song";
 export type Dev = "key" | "pad";
 export const ACTIONS: { id: Act; label: string }[] = [
   { id: "up", label: "MOVE UP" }, { id: "down", label: "MOVE DOWN" }, { id: "left", label: "MOVE LEFT" }, { id: "right", label: "MOVE RIGHT" },
   { id: "fire", label: "FIRE (HOLD)" }, { id: "focus", label: "FOCUS (HOLD)" }, { id: "bomb", label: "BOMB" },
   { id: "tgt0", label: "TARGET RANDOM" }, { id: "tgt1", label: "TARGET KOS" }, { id: "tgt2", label: "TARGET ATTACKERS" }, { id: "tgt3", label: "TARGET BADGES" },
-  { id: "pause", label: "PAUSE" }, { id: "mute", label: "MUTE MUSIC" }, { id: "crt", label: "CRT FILTER" }, { id: "lowfx", label: "LOW FX" },
+  { id: "pause", label: "PAUSE" }, { id: "mute", label: "MUTE MUSIC" }, { id: "crt", label: "CRT FILTER" }, { id: "lowfx", label: "LOW FX" }, { id: "song", label: "SWITCH SOUNDTRACK" },
 ];
 export type Binds = Record<Dev, Record<Act, string[]>>;
 export const DEFAULTS: Binds = {
   key: { up: ["ArrowUp", "KeyW"], down: ["ArrowDown", "KeyS"], left: ["ArrowLeft", "KeyA"], right: ["ArrowRight", "KeyD"], fire: ["KeyZ", "Space"], focus: ["ShiftLeft", "ShiftRight"],
-    bomb: ["KeyX", ""], tgt0: ["Digit1", "Numpad1"], tgt1: ["Digit2", "Numpad2"], tgt2: ["Digit3", "Numpad3"], tgt3: ["Digit4", "Numpad4"], pause: ["KeyP", ""], mute: ["KeyM", ""], crt: ["KeyV", ""], lowfx: ["KeyG", ""] },
+    bomb: ["KeyX", ""], tgt0: ["Digit1", "Numpad1"], tgt1: ["Digit2", "Numpad2"], tgt2: ["Digit3", "Numpad3"], tgt3: ["Digit4", "Numpad4"], pause: ["KeyP", ""], mute: ["KeyM", ""], crt: ["KeyV", ""], lowfx: ["KeyG", ""], song: ["KeyN", ""] },
   // left stick move (D-pad as alternate), right stick = targeting, A fire, X focus, RT bomb
   pad: { up: ["A1-", "B12"], down: ["A1+", "B13"], left: ["A0-", "B14"], right: ["A0+", "B15"], fire: ["B0", ""], focus: ["B2", ""], bomb: ["B7", ""],
-    tgt0: ["A3-", ""], tgt1: ["A2+", ""], tgt2: ["A3+", ""], tgt3: ["A2-", ""], pause: ["", ""], mute: ["", ""], crt: ["B8", ""], lowfx: ["", ""] },
+    tgt0: ["A3-", ""], tgt1: ["A2+", ""], tgt2: ["A3+", ""], tgt3: ["A2-", ""], pause: ["", ""], mute: ["", ""], crt: ["B8", ""], lowfx: ["", ""], song: ["", ""] },
 };
 /** Fixed keys: Enter (menus), Escape (back / pause / cancel), Start (menu / pause). */
 export const RESERVED: Record<Dev, string[]> = { key: ["Enter", "Escape"], pad: ["B9"] };

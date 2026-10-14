@@ -1,6 +1,14 @@
 import { Sequencer } from "./sequencer";
 import { genesisOutput } from "./genesis";
 import { SONG } from "./songs";
+import { SONG_TF, TF_THRESHOLDS } from "./songs_tf";
+import { Song } from "./sequencer";
+/** Soundtracks: 0 = original "Starfall Overdrive" (6 stages), 1 = "Thunder Blitz" (8 sections). */
+export const SOUNDTRACKS: { name: string; song: Song; thresholds: number[] }[] = [
+  { name: "STARFALL OVERDRIVE", song: SONG, thresholds: [75, 50, 25, 10] },
+  { name: "THUNDER BLITZ", song: SONG_TF, thresholds: TF_THRESHOLDS },
+];
+const LS_ST = "sf101soundtrack";
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 // Procedural chiptune SFX + Genesis-style adaptive FM music (Web Audio).
 export class Audio {
@@ -86,9 +94,29 @@ export class Audio {
     while (s > now) s -= bar; return ((now - s) / beat) % 1;
   }
   setTier(t: number) { this.pendingTier = t; if (this.seq) { this.seq.pending = this.duel ? 5 : Math.max(0, Math.min(4, t)); } }
+  soundtrack = (() => { try { return Number(localStorage.getItem(LS_ST)) === 1 ? 1 : 0; } catch { return 0; } })();
+  private seqs: Sequencer[] = []; private out: AudioNode | null = null;
+  get soundtrackName() { return SOUNDTRACKS[this.soundtrack].name; }
+  /** Stage for the current soundtrack from players remaining (duel => last stage). */
+  stageFor(remaining: number, duel: boolean) {
+    const st = SOUNDTRACKS[this.soundtrack], n = st.song.stages.length; if (duel) return n - 1;
+    const i = st.thresholds.findIndex(th => remaining > th); return i < 0 ? st.thresholds.length : i;
+  }
+  /** Set music stage from the match state (works for any soundtrack). */
+  setRemaining(remaining: number, duel: boolean) { this.lastRem = remaining; this.lastDuel = duel; this.pendingTier = this.stageFor(remaining, duel); if (this.seq) this.seq.pending = this.pendingTier; }
+  private lastRem = 101; private lastDuel = false;
+  /** Switch soundtrack (saved); if music is playing it restarts on the new soundtrack at the matching stage. */
+  setSoundtrack(i: number) {
+    i = ((i % SOUNDTRACKS.length) + SOUNDTRACKS.length) % SOUNDTRACKS.length; if (i === this.soundtrack) return;
+    try { localStorage.setItem(LS_ST, String(i)); } catch { /* private mode */ }
+    const was = this.playing; if (was) this.stopMusic();
+    this.soundtrack = i; this.seq = null; this.pendingTier = this.stageFor(this.lastRem, this.lastDuel);
+    if (was) this.startMusic();
+  }
   startMusic() {
     const c = this.ctx; if (!c) return;
-    if (!this.seq) this.seq = new Sequencer(c, genesisOutput(c, this.musBus), SONG);
+    if (!this.out) this.out = genesisOutput(c, this.musBus);
+    if (!this.seq) this.seq = this.seqs[this.soundtrack] ??= new Sequencer(c, this.out, SOUNDTRACKS[this.soundtrack].song);
     if (this.playing) return; this.playing = true;
     this.seq.pending = this.pendingTier; this.seq.start(c.currentTime + 0.1); this.tier = this.pendingTier; this.beatT = c.currentTime + 0.1;
     this.timer2 = window.setInterval(() => this.schedule(), 25);
@@ -104,7 +132,8 @@ export class Audio {
 }
 
 /** Offline preview: render `secs` of a music stage to a 16-bit stereo WAV (used by music-preview.mjs). */
-export async function renderMusicPreview(stage: number, secs: number, sr = 44100): Promise<ArrayBuffer> {
+export async function renderMusicPreview(stage: number, secs: number, sr = 44100, soundtrack = 0): Promise<ArrayBuffer> {
+  const SONG = SOUNDTRACKS[soundtrack]?.song ?? SOUNDTRACKS[0].song;
   const oc = new OfflineAudioContext(2, Math.floor(sr * secs), sr);
   const bus = oc.createGain(); bus.gain.value = 0.5; bus.connect(oc.destination);
   const seq = new Sequencer(oc, genesisOutput(oc, bus), SONG); seq.pending = Math.min(stage, SONG.stages.length - 1);

@@ -1,5 +1,5 @@
 import { drawText, textWidth } from "./font";
-import { Audio, renderMusicPreview } from "./audio";
+import { Audio, renderMusicPreview, SOUNDTRACKS } from "./audio";
 import { DUEL_HP } from "./sim";
 import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport, Snap } from "./net";
@@ -153,7 +153,7 @@ class Game {
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
       this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
-    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.setTier(0); audio.startMusic();
+    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.setRemaining(101, false); audio.startMusic();
     this.popup("STAGE START!", PW / 2, PH / 2 - 20, YEL, 3);
   }
   // ---------- network / lobby ----------
@@ -293,9 +293,11 @@ class Game {
       if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
       if (this.state === "lobby") { this.tickLobby(dt); if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
       if (this.state === "title") {
-        if (hit("ArrowUp", "ArrowDown", "KeyW", "KeyS", "PadUp", "PadDown")) { this.titleSel ^= 1; audio.tone(520, 0.04, "square", 0.05); }
-        if (hit("KeyC", "PadY")) this.openControls();
-        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel) this.openControls(); else this.openName(); }
+        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 2) % 3; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 3; audio.tone(520, 0.04, "square", 0.05); }
+        if (actHit("song") || (this.titleSel === 2 && hit("ArrowLeft", "ArrowRight", "KeyA", "KeyD", "PadLeft", "PadRight"))) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); }
+        else if (hit("KeyC", "PadY")) this.openControls();
+        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 2) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel) this.openControls(); else this.openName(); }
       }
       else if (this.state === "name") this.updateName();
       else if (this.state === "over" || this.state === "win") {
@@ -317,6 +319,7 @@ class Game {
     }
     if (hit("Escape", "PadStart") || actHit("pause")) this.paused = !this.paused;
     if (actHit("mute")) audio.toggleMute();
+    if (actHit("song")) { audio.setSoundtrack(audio.soundtrack + 1); this.popup("MUSIC: " + audio.soundtrackName, PW / 2, PH - 84, CYA, 1.5); }
     if (this.paused) return;
     for (let k = 0; k < 4; k++) if (actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
     if (this.hitstop > 0) { this.hitstop--; return; }
@@ -325,7 +328,7 @@ class Game {
     this.updatePlayer(dt); this.updateChain(dt); this.spawnFormations(dt); this.updateEnemies(dt); this.updateBullets(dt);
     this.updateItems(dt); this.updateWaves(dt); this.updateWarns(dt); this.net.tick(dt, this.hints()); this.updateRivals(dt); this.updateProjs(dt); this.updateFx(dt);
     this.randCd -= dt; this.computeTargets();
-    const rem = this.remaining; audio.duel = this.duel; audio.setTier(rem > 75 ? 0 : rem > 50 ? 1 : rem > 25 ? 2 : rem > 10 ? 3 : 4); audio.lowHealth = this.hp === 1;
+    const rem = this.remaining; audio.duel = this.duel; audio.setRemaining(rem, this.duel); audio.lowHealth = this.hp === 1;
   }
 
   updatePlayer(dt: number) {
@@ -1041,9 +1044,9 @@ class Game {
     drawText(ctx, "101", W / 2, 130 + bob, CYA, 8, "center", "#003040");
     drawText(ctx, "101-PLAYER NEON SHOOTER BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
-    drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 262, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
-    ["LAUNCH", "CONTROLS"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
-      const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")";
+    drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 274, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
+    ["LAUNCH", "CONTROLS", "MUSIC"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
+      const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : i === 1 ? "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")" : "MUSIC: < " + audio.soundtrackName + " >" + (pad.connected ? "" : "  (" + kn("song") + ")");
       drawText(ctx, (on ? "> " : "  ") + lab + (on ? " <" : "  "), W / 2, 230 + i * 14, on ? (blink ? WHT : YEL) : "#8070b0", i === 0 ? 2 : 1, "center"); });
     const mv = (d: Dev) => { const n = (["up", "down", "left", "right"] as Act[]).map(a => actName(d, a)); return n.every(q => q.startsWith("LS")) ? "L-STICK" : n.every(q => q.startsWith("D-")) ? "D-PAD" : n.join("/"); };
     const help = pad.connected ? ["CONTROLLER: " + mv("pad") + " MOVE   " + pn("fire") + " HOLD FIRE   " + pn("focus") + " HOLD FOCUS   " + pn("bomb") + " BOMB",
@@ -1051,7 +1054,7 @@ class Game {
       ] : ["MOVE: " + mv("key") + "   FIRE: HOLD " + kn("fire") + "   FOCUS: " + kn("focus") + "   BOMB: " + kn("bomb"),
       "TARGET: " + kn("tgt0") + " RANDOM  " + kn("tgt1") + " KOS  " + kn("tgt2") + " ATTACKERS  " + kn("tgt3") + " BADGES   " + kn("mute") + " MUTE  " + kn("pause") + " PAUSE  " + kn("crt") + " CRT",
       "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
-    help.forEach((l, i) => drawText(ctx, l, W / 2, 280 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
+    help.forEach((l, i) => drawText(ctx, l, W / 2, 290 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
 
   renderPanels() {
@@ -1259,7 +1262,7 @@ class Game {
   }
 }
 
-const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview;
+const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = SOUNDTRACKS.map(s => ({ name: s.name, stages: s.song.stages.map(st => ({ name: st.name, bpm: st.bpm, bars: st.order.length })) }));
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };

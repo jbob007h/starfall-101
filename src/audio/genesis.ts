@@ -5,7 +5,8 @@
 // Works with any BaseAudioContext (realtime or OfflineAudioContext for previews).
 
 export interface Op { mul: number; tl: number; ar: number; dr: number; sl: number; sr?: number; rr: number; dt?: number; }
-export interface Patch { name: string; alg: number; fb: number; ops: [Op, Op, Op, Op]; vol?: number; }
+/** vib: delayed LFO vibrato (rate Hz, depth cents, delay s) applied to all operators, like the YM2612 LFO/PMS or a driver's soft vibrato. */
+export interface Patch { name: string; alg: number; fb: number; ops: [Op, Op, Op, Op]; vol?: number; vib?: { rate: number; depth: number; delay: number }; bendTime?: number; }
 
 /** YM2612 algorithms: modulation edges [from, to] (0-based op index) and carrier outputs. */
 const ALG: { mods: [number, number][]; out: number[] }[] = [
@@ -35,7 +36,8 @@ function fbWave(ctx: BaseAudioContext, fb: number) {
 export function midiHz(m: number) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 /** Play one FM note. `dur` is the gate (key-on) length in seconds. */
-export function playFM(ctx: BaseAudioContext, dest: AudioNode, p: Patch, freq: number, t: number, dur: number, vel = 1) {
+/** `bend` (semitones, optional): note starts that far off pitch and glides in over `bendTime` s (driver pitch slide). */
+export function playFM(ctx: BaseAudioContext, dest: AudioNode, p: Patch, freq: number, t: number, dur: number, vel = 1, bend = 0, bendTime = 0.07) {
   const alg = ALG[p.alg] || ALG[4], oscs: OscillatorNode[] = [], gains: GainNode[] = [];
   const carrierScale = 0.32 * vel * (p.vol ?? 1) / Math.sqrt(alg.out.length);
   let end = t + dur;
@@ -53,6 +55,12 @@ export function playFM(ctx: BaseAudioContext, dest: AudioNode, p: Patch, freq: n
     o.connect(g); oscs.push(o); gains.push(g);
     end = Math.max(end, t + dur + op.rr * 1.6 + 0.02);
   });
+  if (bend) for (const o of oscs) { o.detune.setValueAtTime(bend * 100, t); o.detune.linearRampToValueAtTime(0, t + (p.bendTime ?? bendTime)); }
+  if (p.vib && dur > p.vib.delay) {
+    const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = p.vib.rate;
+    lg.gain.setValueAtTime(0, t); lg.gain.setValueAtTime(0, t + p.vib.delay); lg.gain.linearRampToValueAtTime(p.vib.depth, t + p.vib.delay + 0.25);
+    lfo.connect(lg); for (const o of oscs) lg.connect(o.detune); lfo.start(t); lfo.stop(end);
+  }
   for (const [a, b] of alg.mods) gains[a].connect(oscs[b].frequency);
   for (const i of alg.out) gains[i].connect(dest);
   for (const o of oscs) { o.start(t); o.stop(end); }
@@ -144,6 +152,18 @@ export function drumKit(ctx: BaseAudioContext) {
   const clN = onePoleLP(onePoleHP(synth(sr, 0.25, () => noise()), sr, 1000), sr, 5000);
   const clap = synth(sr, 0.25, (t, i) => { const bursts = [0, 0.011, 0.022].some(b => t >= b && t < b + 0.008) ? 1 : 0; return clN[i] * (bursts * 1.2 + (t > 0.022 ? Math.exp(-(t - 0.022) * 18) : 0)); });
   const raw: Record<string, [Float32Array, number]> = { k: [kick, 2.6], s: [snare, 2.4], h: [hat, 1.6], o: [ohat, 1.6], c: [crash, 1.8], t: [tom(95), 2.2], u: [tom(150), 2.2], p: [clap, 2.4] };
+  // Rock kit (second soundtrack): tighter, punchier kick with beater click, fat ringing snare, ride, 3 rack/floor toms.
+  let rp = 0;
+  raw.K = [synth(sr, 0.26, t => { const f = 52 + 260 * Math.exp(-t * 45); rp += 2 * Math.PI * f / sr;
+    return Math.tanh(Math.sin(rp) * 2.2) * Math.exp(-t * 11) + (t < 0.004 ? noise() * 0.9 : 0) + (t < 0.012 ? Math.sin(2 * Math.PI * 3200 * t) * 0.5 * (1 - t / 0.012) : 0); }), 3.0];
+  rp = 0; let rp2 = 0;
+  const rsN = onePoleLP(onePoleHP(synth(sr, 0.34, t => noise() * (Math.exp(-t * 11) * 0.9 + 0.15 * Math.exp(-t * 4))), sr, 700), sr, 8500);
+  raw.S = [synth(sr, 0.34, (t, i) => { rp += 2 * Math.PI * (200 * (1 + 0.45 * Math.exp(-t * 50))) / sr; rp2 += 2 * Math.PI * 340 / sr;
+    return (Math.sin(rp) + Math.sin(rp2) * 0.4) * Math.exp(-t * 16) * 1.1 + rsN[i] * 1.2; }), 3.0];
+  const rdN = onePoleHP(synth(sr, 0.5, t => metal(t * 1.6) * 0.8 + noise() * 0.25), sr, 4500);
+  raw.R = [synth(sr, 0.5, (t, i) => rdN[i] * Math.exp(-t * 6)), 1.4];
+  const rtom = (f0: number) => { let q = 0; return synth(sr, 0.42, t => { const f = f0 * (1 + 0.5 * Math.exp(-t * 14)); q += 2 * Math.PI * f / sr; return Math.tanh(Math.sin(q) * 1.6) * Math.exp(-t * 6.5) + (t < 0.005 ? noise() * 0.7 : 0); }); };
+  raw.T = [rtom(200), 2.6]; raw.U = [rtom(140), 2.6]; raw.L = [rtom(92), 2.6];
   kit = {}; for (const k in raw) kit[k] = genesisPCM(ctx, raw[k][0], raw[k][1]);
   (kit as any).__raw = raw; kitCache.set(ctx, kit); return kit;
 }
