@@ -42,3 +42,6 @@ Genesis-style FM soundtrack (src/audio/: genesis.ts synth, sequencer.ts tracker,
    Or New -> Web Service: Build `npm ci --include=dev && npm run build && npm run build:server`, Start `npm start`, Health check `/healthz`.
 3. Open `https://<service>.onrender.com` and share the link; everyone who joins within 20s shares a lobby.
 Notes: free instances sleep after ~15 min idle (first load takes ~30-60s to wake) and restarts drop live matches. Render passes `PORT` automatically.
+
+## Pacing & enemy upgrades
+CPU players drop faster (top 20 at ~4:00, top 10 at ~5:00, duel at ~6:35). From 1:00, formation enemies are gradually replaced by armored (3 HP) and later spiked (5 HP) variants that keep their chain colour, flash/chip when hit and give more score and dots. Details in PLAN.md.
