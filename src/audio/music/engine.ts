@@ -63,7 +63,11 @@ export interface TrackDef {
   id: string; title: string; stage: string;
   /** "E minor", "B minor", "C major"... (used for harmony and key-mode stingers). */
   key: string; bpm: number;
-  patches: { lead: string; arp: string; pad: string; stab: string };
+  patches: { lead: string; arp: string; pad: string; stab: string; bass?: string };
+  /** "sega" = sampled Mega Drive-style DAC kit for every drum hit (hats/crash too) instead of PSG noise. */
+  kit?: "sega";
+  /** Stabs voiced as full triads (staccato chordal comping) instead of root/fifth/octave power chords. */
+  stabChord?: boolean;
   /** Semitones added to the lead melody. */
   shift: number;
   /** tanh drive on the lead + echo channels (0 = clean). */
@@ -160,7 +164,7 @@ export function compileTrack(tr: TrackDef): CompiledTrack {
       const b0 = bi * 16, last = bi === chords.length - 1, root = 36 + ch.pc;
       for (let s = 0; s < 16; s++) {
         const c = sec.bass[s]; if (!c || c === ".") continue;
-        add(b0 + s, { k: "fm", ch: "fm3", patch: "slap", midi: root + (c === "o" ? 12 : c === "f" ? 7 : 0), len: sec.bass[s + 1] === "." ? 2 : 1, gate: 0.85, vel: 1 });
+        add(b0 + s, { k: "fm", ch: "fm3", patch: tr.patches.bass ?? "slap", midi: root + (c === "o" ? 12 : c === "f" ? 7 : 0), len: sec.bass[s + 1] === "." ? 2 : 1, gate: 0.85, vel: 1 });
       }
       if (sec.harm.includes("pad")) {
         if (prevPad && prevPad.chord === ch.name) prevPad.evs.forEach(e => e.len += 16); // held across repeated chords
@@ -175,11 +179,12 @@ export function compileTrack(tr: TrackDef): CompiledTrack {
         for (let s = 0; s < 16; s += rate) add(b0 + s, { k: "fm", ch: "fm4", patch: tr.patches.arp, midi: base + tones[order[((b0 + s) / rate) % order.length]], len: rate, gate: 0.9, vel: s % 4 === 0 ? 1 : 0.7 });
       }
       if (sec.harm.includes("stab") && sec.stab) {
-        const p = sec.stab, base = (ch.pc >= 7 ? 36 : 48) + ch.pc;
+        const p = sec.stab, base = tr.stabChord ? (ch.pc >= 8 ? 48 : 60) + ch.pc : (ch.pc >= 7 ? 36 : 48) + ch.pc;
+        const voicing = tr.stabChord ? [0, ch.iv[1], ch.iv[2]] : [0, 7, 12];
         for (let s = 0; s < 16; s++) {
           if (p[s] !== "x") continue;
           let len = 1; while (len < 2 && s + len < 16 && p[s + len] === ".") len++;
-          for (const iv of [0, 7, 12]) add(b0 + s, { k: "fm", ch: "fm5", patch: tr.patches.stab, midi: base + iv, len, gate: 0.8, vel: 0.9 });
+          for (const iv of voicing) add(b0 + s, { k: "fm", ch: "fm5", patch: tr.patches.stab, midi: base + iv, len, gate: 0.8, vel: 0.9 });
         }
       }
       drumEvents({ ...sec.drums, ...((last && sec.fill) || {}) }, add, b0, !!(last && sec.fill?.s));
@@ -579,6 +584,7 @@ export class MusicEngine {
   // ------------------------------------------------------------ voices
   private playEv(d: Deck, e: Ev, t: number) {
     const bus = d.input[e.ch]; if (!bus) return;
+    if (d.track.def.kit === "sega" && e.k !== "fm" && e.k !== "psg") { this.sample(bus, t, this.segaKit()[e.k], e.vel); return; }
     switch (e.k) {
       case "fm": { const p = this.patches[e.patch]; if (p) this.fm(bus, t, e.midi + this.transpose, e.len * (60 / this.bpmNow / 4) * e.gate, p, e.vel); break; }
       case "psg": this.psg(bus, t, e.midi + this.transpose, e.len * (60 / this.bpmNow / 4) * e.gate, e.vel); break;
@@ -633,6 +639,33 @@ export class MusicEngine {
     [11, 9, 7, 5, 3, 0].forEach((v, k) => g.gain.setValueAtTime(vol * PSG_LV(v), t + dur + k * fr));
     o.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 7 * fr);
     o.onended = () => { try { g.disconnect(); } catch { /* ignore */ } };
+  }
+  /** Mega Drive-style drum samples: rendered once, hard-compressed, held at ~13 kHz and quantised to 8 bits like a DAC sample. */
+  private kitBufs: Record<"kick" | "snare" | "hat" | "ohat" | "crash", AudioBuffer> | null = null;
+  private segaKit() {
+    if (this.kitBufs) return this.kitBufs;
+    const sr = this.ctx.sampleRate, hold = Math.max(1, Math.round(sr / 13300));
+    let seed = 0x5eed; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x3fffffff - 1; };
+    const make = (secs: number, fn: (t: number, n: number) => number, drive: number) => {
+      const len = Math.ceil(secs * sr), b = this.ctx.createBuffer(1, len, sr), d = b.getChannelData(0);
+      let held = 0, prevN = 0;
+      for (let i = 0; i < len; i++) {
+        if (i % hold === 0) { const n = rnd(); const hp = n - prevN; prevN = n; held = Math.round(Math.tanh(drive * fn(i / sr, hp * 0.5)) / Math.tanh(drive) * 127) / 127; }
+        d[i] = held * Math.min(1, (len - i) / (sr * 0.004));
+      }
+      return b;
+    };
+    let ph = 0, ph2 = 0;
+    const kick = make(0.2, (t, n) => { const f = 55 + 190 * Math.exp(-t / 0.025); ph += 2 * Math.PI * f / 13300; return Math.sin(ph) * Math.exp(-t / 0.09) + n * 1.2 * Math.exp(-t / 0.004); }, 2.6);
+    const snare = make(0.17, (t, n) => { ph2 += 2 * Math.PI * (180 + 60 * Math.exp(-t / 0.02)) / 13300; return 0.7 * Math.sin(ph2) * Math.exp(-t / 0.04) + 1.1 * n * Math.exp(-t / 0.06); }, 3.2);
+    const hat = make(0.05, (t, n) => n * Math.exp(-t / 0.012), 2);
+    const ohat = make(0.2, (t, n) => n * Math.exp(-t / 0.07), 2);
+    const crash = make(1.1, (t, n) => n * (0.6 * Math.exp(-t / 0.35) + 0.4 * Math.exp(-t / 0.05)), 1.8);
+    return (this.kitBufs = { kick, snare, hat, ohat, crash });
+  }
+  private sample(bus: AudioNode, t: number, buf: AudioBuffer, v: number) {
+    const s = this.ctx.createBufferSource(), g = this.ctx.createGain(); s.buffer = buf; g.gain.value = 0.8 * v;
+    s.connect(g); g.connect(bus); s.start(t); s.onended = () => { try { g.disconnect(); } catch { /* ignore */ } };
   }
   private noiseSrc(t: number, dur: number) { const s = this.ctx.createBufferSource(); s.buffer = this.noise; s.start(t, Math.random() * 0.8); s.stop(t + dur); return s; }
   private decay(t: number, v: number, dur: number) { const g = this.ctx.createGain(); g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); return g; }

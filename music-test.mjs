@@ -90,6 +90,33 @@ for (const url of urls) {
   await ev(() => { const a = window.__audio; a.setSoundtrack(1); a.updateMusic({ remaining: 70, duel: false }); a.startMusic(); }); await w(1200); s = await st();
   ok(s.track === "aurora" && s.section === "B", "CLASSIC FM plan: 70 left -> aurora/B " + JSON.stringify({ track: s.track, section: s.section }));
   await ev(() => { const a = window.__audio; a.stopMusic(); a.setSoundtrack(0); });
+  // EMERALD SKY: full adaptive walk (sections 1-8, tiers, boss bump, danger, key change, duel, spectate, victory)
+  {
+    const ei = await ev(() => { const a = window.__audio; for (let i = 0; i < 16; i++) { a.setSoundtrack(i); if (a.director.planName === "EMERALD SKY") return i; } return -1; });
+    ok(ei >= 2, "EMERALD SKY is a selectable soundtrack (index " + ei + ")");
+    await ev(() => { const a = window.__audio; a.updateMusic({ remaining: 101, duel: false, hp: 3, bombs: 2, bossActive: false }); a.startMusic(); }); await w(1000); s = await st();
+    ok(s.track === "emerald" && s.section === "1" && s.bpm === 140 && s.tier === 0, "emerald: start 1 @140 tier 0 " + JSON.stringify({ track: s.track, section: s.section, bpm: s.bpm, tier: s.tier }));
+    for (const [rem, sec] of [[80, "2"], [60, "3"], [45, "4"], [30, "5"], [15, "6"]]) {
+      await gs({ remaining: rem }); await w(2000); s = await st();
+      ok(s.section === sec && s.tr === 0, `emerald: ${rem} left -> section ${sec} (${s.section} @${s.bpm})`);
+    }
+    await ev(() => { for (let i = 0; i < 3; i++) window.__audio.musicEvent("sent", 2); }); await w(5000); s = await st();
+    ok(s.tier === 3 && s.ch.fm2 === 1 && s.ch.sq1 === 1, "emerald: momentum -> tier 3 (" + s.tier + ")");
+    await gs({ remaining: 30, bossActive: true }); await w(2000); s = await st();
+    ok(s.section === "6", "emerald: boss bumps 5 -> 6 (" + s.section + ")"); await gs({ bossActive: false });
+    let dd = await (async () => { await gs({ hp: 1, bombs: 0 }); await w(300); return ev(() => window.__audio.danger); })();
+    ok(dd === 3, "emerald: critical danger (" + dd + ")"); await gs({ hp: 3, bombs: 2 });
+    await gs({ remaining: 8 }); await w(2200); s = await st();
+    ok(s.section === "7" && s.tr === 1 && s.bpm >= 170, "emerald: final ten -> 7, key +1 " + JSON.stringify({ section: s.section, tr: s.tr, bpm: s.bpm }));
+    await gs({ remaining: 2, duel: true }); await w(2200); s = await st();
+    ok(s.section === "8" && s.tr === 1 && s.bpm >= 180, "emerald: duel -> 8 " + JSON.stringify({ section: s.section, bpm: s.bpm }));
+    await ev(() => window.__audio.musicEvent("defeat")); await w(3000); s = await st();
+    ok(s.mode === "spectate" && s.track === "emerald" && s.section === "1" && s.ch.fm1 === 0 && s.tr === 0, "emerald: defeat -> spectate section 1 " + JSON.stringify({ mode: s.mode, section: s.section }));
+    await ev(() => { const a = window.__audio; a.updateMusic({ remaining: 101, duel: false }); a.startMusic(); }); await w(800);
+    await ev(() => window.__audio.musicEvent("victory")); await w(4500); s = await st();
+    ok(!s.playing && s.mode === "ended", "emerald: victory fanfare ends the music");
+    await ev(() => window.__audio.setSoundtrack(0));
+  }
   console.log("sections heard:", (await ev(() => window.__secs)).join(" "));
   ok(!errs.length, "console errors: " + (errs.length ? errs.join(" | ") : "none"));
   await p.close();

@@ -96,6 +96,7 @@ interface Plan {
 // STARFALL ASCENT: section by players left; a mini-boss bumps it one section up (never into the final-ten/duel music).
 const ASCENT_AT = [85, 70, 55, 40, 25, 10];
 const ascentIdx = (s: GameMusicState) => { if (s.duel) return 7; const i = ASCENT_AT.findIndex(th => s.remaining > th); return i < 0 ? 6 : i; };
+const ascentPick = (track: string, s: GameMusicState): Cue => { let i = ascentIdx(s); if (s.bossActive && i < 6) i = Math.min(i + 1, 5); return { track, section: String(i + 1) }; };
 // Classic adaptive score across the three short tracks.
 const CLASSIC: { above: number; cue: Cue }[] = [
   { above: 80, cue: { track: "aurora", section: "A" } }, { above: 65, cue: { track: "aurora", section: "B" } }, { above: 50, cue: { track: "aurora", section: "C" } },
@@ -109,8 +110,7 @@ const single = (s: GameMusicState) => s.duel || s.bossActive || s.remaining <= 2
 export const PLANS: Plan[] = [
   {
     name: "STARFALL ASCENT", duelTempo: 0, spectate: { track: "ascent", section: "1" },
-    pick: s => { let i = ascentIdx(s); if (s.bossActive && i < 6) i = Math.min(i + 1, 5); return { track: "ascent", section: String(i + 1) }; },
-    stage: s => ascentIdx(s),
+    pick: s => ascentPick("ascent", s), stage: s => ascentIdx(s),
   },
   {
     name: "CLASSIC FM", duelTempo: 8, spectate: { track: "vector", section: "B" },
@@ -124,6 +124,8 @@ export const PLANS: Plan[] = [
     name, duelTempo: 8, spectate: { track, section: "A" },
     pick: s => ({ track, section: "ABC"[single(s)] }), stage: single,
   })),
+  // EMERALD SKY: same 8-section match arc as STARFALL ASCENT, Mega Drive "green zone" palette (appended to keep saved indexes)
+  { name: "EMERALD SKY", duelTempo: 0, spectate: { track: "emerald", section: "1" }, pick: s => ascentPick("emerald", s), stage: s => ascentIdx(s) },
 ];
 
 const BAND: ChannelId[] = ["fm1", "fm2", "fm3", "fm4", "fm5", "sq1"];
