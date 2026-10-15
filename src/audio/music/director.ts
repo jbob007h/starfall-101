@@ -16,8 +16,11 @@ export interface GameMusicState {
   remaining: number;
   /** Final 1v1. */
   duel: boolean;
-  /** Player is on their last hit point. */
+  /** Player is on their last hit point (used when hp isn't given). */
   lowHealth: boolean;
+  /** Hit points (1..3) and bombs in stock: together they set the danger level. */
+  hp?: number;
+  bombs?: number;
   /** Current kill chain. */
   chain: number;
   /** Chain is ARMED (an attack will send when the chain timer ends). */
@@ -54,7 +57,17 @@ export const DIRECTION = {
     { fm5: 1, fm4: 1.1, fm2: 1, sq1: 1, psg: 1 },   // 3: + lead echo, PSG harmony
   ] as Partial<Record<ChannelId, number>>[],
   duelTempoRamp: 3,
-  lowHealthHz: 1600,
+  /** Danger = how thin the player's safety margin is (HP + bombs), not what they just did.
+   *  Level by table[hp - 1][min(bombs, 2)]; 0 safe, 1 caution, 2 danger, 3 critical (last hit point, no bombs). */
+  danger: {
+    table: [[3, 2, 2], [1, 1, 0], [0, 0, 0]],
+    hz: [20000, 9000, 2600, 1600],     // master low-pass per level
+    heartsPerBar: [0, 1, 2, 4],         // heartbeat on beat 1 / beats 1+3 / every beat
+    heartVol: [0, 0.5, 0.85, 1],
+    ticks: [false, false, false, true], // PSG clock tick on the off-beats
+    thin: [1, 1, 1, 0.5],               // pad/stabs + arp level: the band thins out at critical
+    reliefSecs: 1.2,                    // filter reopens this slowly when danger drops
+  },
   shieldHz: 6500,
   bomb: { hz: 350, duck: 0.25, secs: 1.6 },          // "the bomb ate the music": band ducks + filter sweeps back open
   chainLost: { hz: 1200, secs: 0.6, lead: 0.35, leadSecs: 1.2 },
@@ -121,11 +134,13 @@ export class MusicDirector {
   momentum = 0;
   /** Current layer tier (0..3). */
   tier = 0;
+  /** 0 safe .. 3 critical (see DIRECTION.danger). */
+  danger = 0;
   mode: "idle" | "play" | "spectate" | "ended" = "idle";
   private cueKey = ""; private transpose = 0; private last: GameMusicState = { remaining: 101, duel: false, lowHealth: false, chain: 0 };
   private barsSince = 99; private lowPhrases = 0; private bossTier = false; private bossWanted = false;
   private applied: Partial<Record<ChannelId, number>> = {}; private filterHz = 20000; private tempoOff = 0; private drumHalf = false;
-  private bombT = -99; private chainLostT = -99; private incomingT = -99; private tripleUntil = 0; private lastT = 0;
+  private dangerHz = 20000; private bombT = -99; private chainLostT = -99; private incomingT = -99; private tripleUntil = 0; private lastT = 0;
   constructor(private m: MusicEngine) {
     m.on("bar", e => this.onBar(e), { ahead: true });
   }
@@ -144,7 +159,7 @@ export class MusicDirector {
     this.m.setLoopMode("section"); this.m.setDrumMode("normal"); this.drumHalf = false; this.m.setBuild(0);
     this.tempoOff = s.duel ? this.p.duelTempo : 0; this.m.setTempoOffset(this.tempoOff);
     this.m.resetChannels(0); this.applied = {};
-    this.filterHz = 20000; this.m.setFilter(null, 0);
+    this.filterHz = this.dangerHz = 20000; this.m.setFilter(null, 0); this.danger = this.dangerFor(s);
     this.m.play(cue.track, { section: cue.section, transpose: this.transpose });
     this.cueKey = cue.track + "/" + cue.section; this.stage = this.p.stage(s);
     this.applyMix(0);
@@ -174,9 +189,12 @@ export class MusicDirector {
     // tempo: duel offset + triple-bomb rush
     const off = (s.duel ? this.p.duelTempo : 0) + (now < this.tripleUntil ? DIRECTION.tripleBomb.bpm : 0);
     if (off !== this.tempoOff) { this.m.setTempoOffset(off, off > this.tempoOff ? 0.5 : DIRECTION.duelTempoRamp); this.tempoOff = off; }
+    // danger level from HP + bombs; its filter closes quickly and reopens slowly (relief)
+    const D = DIRECTION; this.danger = this.dangerFor(s);
+    const dHz = D.danger.hz[this.danger];
+    this.dangerHz = dHz < this.dangerHz ? dHz : Math.min(dHz, this.dangerHz * Math.pow(20000 / D.danger.hz[3], dt / D.danger.reliefSecs));
     // filter: the lowest of every active treatment
-    const D = DIRECTION; let hz = 20000;
-    if (s.lowHealth) hz = Math.min(hz, D.lowHealthHz);
+    let hz = Math.min(20000, this.dangerHz);
     if (s.shield) hz = Math.min(hz, D.shieldHz);
     const kb = (now - this.bombT) / D.bomb.secs; if (kb >= 0 && kb < 1) hz = Math.min(hz, D.bomb.hz * Math.pow(20000 / D.bomb.hz, kb));
     const kc = (now - this.chainLostT) / D.chainLost.secs; if (kc >= 0 && kc < 1) hz = Math.min(hz, D.chainLost.hz * Math.pow(20000 / D.chainLost.hz, kc));
@@ -207,6 +225,16 @@ export class MusicDirector {
   }
 
   // ---- internals
+  private dangerFor(s: GameMusicState) {
+    const hp = Math.max(1, Math.min(3, s.hp ?? (s.lowHealth ? 1 : 3))), bombs = Math.max(0, Math.min(2, s.bombs ?? 2));
+    return DIRECTION.danger.table[hp - 1][bombs];
+  }
+  /** Heartbeat / tick pattern for a beat (used by the SFX layer, scheduled on the music's beat clock). */
+  dangerPulse(beat: number): { heart: number; tick: boolean } {
+    if (this.mode !== "play") return { heart: 0, tick: false };
+    const D = DIRECTION.danger, n = D.heartsPerBar[this.danger], on = n >= 4 || (n === 2 && beat % 2 === 0) || (n === 1 && beat === 0);
+    return { heart: on ? D.heartVol[this.danger] : 0, tick: D.ticks[this.danger] };
+  }
   private keyFor(s: GameMusicState, cue: Cue) {
     if (!(s.duel || s.remaining <= 10)) return 0;
     return this.m.tracks[this.m.trackIndex(cue.track)].def.finalTranspose ?? 2;
@@ -238,13 +266,14 @@ export class MusicDirector {
       if (id === "fm4" && this.last.lightning && this.mode === "play") v = Math.max(v, D.lightningArp);
       if (id === "fm1" || id === "fm2") v *= lead;
       if (BAND.includes(id)) v *= bombDuck;
+      if ((id === "fm4" || id === "fm5") && this.mode === "play") v *= DIRECTION.danger.thin[this.danger];
       if (Math.abs((this.applied[id] ?? -1) - v) > 0.01) { this.m.setChannel(id, { volume: v }, fade, at); this.applied[id] = v; }
     }
   }
   /** Knocked out: defeat sting, then the plan's calm section, muffled, lead out, until the next match or title. */
   private toSpectate() {
     if (!this.m.playing) return;
-    this.mode = "spectate";
+    this.mode = "spectate"; this.danger = 0;
     this.m.stinger("defeat", { at: "beat" });
     this.m.setBuild(0); this.m.setDrumMode("normal"); this.drumHalf = false; this.m.setTempoOffset(0, 2); this.tempoOff = 0;
     const sp = this.p.spectate;

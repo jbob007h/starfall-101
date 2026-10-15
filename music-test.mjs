@@ -42,6 +42,18 @@ for (const url of urls) {
   // armed build
   const bl = await ev(() => { window.__audio.updateMusic({ armed: true, chain: 30 }); return window.__audio.music.build; });
   ok(bl > 0.6, "armed at chain 30 -> snare build " + bl.toFixed(2)); await gs({ armed: false, chain: 0 });
+  // danger = HP + bombs (bomb use itself is neutral: no momentum change)
+  const m0 = (await st()).mom; await ev(() => window.__audio.musicEvent("bomb")); s = await st();
+  ok(s.mom <= m0, "bomb use doesn't raise momentum (" + m0 + " -> " + s.mom + ")"); await w(1800); // let the bomb duck finish
+  const dz = async o => { await gs(o); await w(250); return ev(() => ({ d: window.__audio.danger, fm5: +window.__audio.music.channel("fm5").volume.toFixed(2) })); };
+  let d = await dz({ hp: 3, bombs: 0 }); ok(d.d === 0, "3 HP, no bombs -> safe (0)");
+  d = await dz({ hp: 2, bombs: 1 }); ok(d.d === 1, "2 HP, 1 bomb -> caution (1)");
+  d = await dz({ hp: 1, bombs: 2 }); ok(d.d === 2, "1 HP, 2 bombs -> danger (2)");
+  const f5 = d.fm5; d = await dz({ hp: 1, bombs: 0 });
+  ok(d.d === 3 && d.fm5 <= f5 * 0.55, "1 HP, no bombs -> critical (3), band thinned " + JSON.stringify(d));
+  const pulse = await ev(() => [0, 1, 2, 3].map(b => window.__audio.director.dangerPulse(b)));
+  ok(pulse.every(p => p.heart === 1 && p.tick), "critical: heartbeat every beat + off-beat ticks");
+  d = await dz({ hp: 3, bombs: 3 }); ok(d.d === 0, "recovered -> safe");
   // final ten key change, duel
   await gs({ remaining: 8 }); await w(2200); s = await st();
   ok(s.section === "7" && s.tr === 1 && s.bpm >= 170, "final ten -> section 7, key +1 " + JSON.stringify({ section: s.section, tr: s.tr, bpm: s.bpm }));

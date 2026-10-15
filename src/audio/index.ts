@@ -29,7 +29,7 @@ export class Audio {
     this.musBus = c.createGain(); this.musBus.gain.value = MIX.music; this.musBus.connect(this.master);
     this.music = new MusicEngine(c, this.musBus, TRACKS, PATCHES, STINGERS); this.music.setVolume(MIX.musicEngine, 0);
     this.director = new MusicDirector(this.music); this.director.setPlan(this.soundtrack);
-    this.music.on("beat", e => this.heartbeat(e.time), { ahead: true }); // low-health heartbeat locked to the beat
+    this.music.on("beat", e => this.heartbeat(e.time, e.beat, e.bpm), { ahead: true }); // danger heartbeat locked to the beat
     const len = c.sampleRate; this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   }
@@ -96,7 +96,7 @@ export class Audio {
   /** Direct engine access for one-off game cues: audio.music.queue({ section: "C" }), setChannel, setTempoOffset, on("bar", ...). */
   music: MusicEngine | null = null;
   director: MusicDirector | null = null;
-  private gs: GameMusicState = { remaining: 101, duel: false, lowHealth: false, chain: 0, armed: false, bossActive: false, shield: false, freeze: false, lightning: false };
+  private gs: GameMusicState = { remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0, armed: false, bossActive: false, shield: false, freeze: false, lightning: false };
   soundtrack = (() => { try { const v = Number(localStorage.getItem(LS_ST)); return v >= 0 && v < SOUNDTRACKS.length ? Math.floor(v) : 0; } catch { return 0; } })();
   get soundtrackName() { return SOUNDTRACKS[this.soundtrack].name; }
   get playing() { return !!this.music?.playing; }
@@ -139,10 +139,15 @@ export class Audio {
   stopMusic() { this.music?.stop(); }
   /** Pause / resume the music in place (game pause). */
   pauseMusic(p: boolean) { this.music?.setPaused(p); }
-  private heartbeat(t: number) {
-    if (!this.lowHealth || this.music?.paused) return;
-    this.tone(60, 0.15, "sine", 0.5, 30, t); this.tone(55, 0.12, "sine", 0.35, 28, t + 0.16);
+  /** Danger pulse from the director: heartbeat (lub-dub) on 1, 1+3 or every beat, PSG ticks on the off-beats at critical. */
+  private heartbeat(t: number, beat: number, bpm: number) {
+    if (!this.director || this.music?.paused) return;
+    const { heart, tick } = this.director.dangerPulse(beat);
+    if (heart > 0) { this.tone(60, 0.15, "sine", 0.5 * heart, 30, t); this.tone(55, 0.12, "sine", 0.35 * heart, 28, t + 0.16); }
+    if (tick) this.noiseHit(0.025, 0.07, 6500, t + 30 / bpm);
   }
+  /** Danger level 0..3 (HP + bombs). */
+  get danger() { return this.director?.danger ?? 0; }
 }
 
 /** Offline preview: render `secs` of a track (all sections in order) to a 16-bit stereo WAV (used by music-preview.mjs).
