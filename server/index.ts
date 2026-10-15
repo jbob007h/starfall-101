@@ -23,7 +23,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-interface Client { ws: WebSocket; conn: number; name: string; match: Match | null; slot: number; ready: boolean; alive: boolean; }
+interface Client { ws: WebSocket; conn: number; name: string; avatar?: number; match: Match | null; slot: number; ready: boolean; alive: boolean; }
 interface Match { id: number; sim: MatchSim; clients: Map<number, Client>; /* slot -> client */ stateT: number;
   watchers: Map<Client, number>; /* spectator -> watched slot */ watched: Set<number>; /* slots told to stream snapshots */ }
 let nextConn = 1, nextMatch = 1;
@@ -54,17 +54,18 @@ function leaveCurrent(c: Client) {
   if (lobby.members.delete(c.conn)) lobbyBroadcast({ t: "lobbyLeave", id: c.conn, name: c.name, count: lobby.members.size });
   if (c.match) { const m = c.match; if (c.alive) m.sim.humanKO(c.slot, -2); setWatch(m, c, -1); m.clients.delete(c.slot); c.match = null; c.alive = false; }
 }
-function joinLobby(c: Client, name: string) {
+function joinLobby(c: Client, name: string, avatar?: unknown) {
   leaveCurrent(c); c.name = clean(name); c.ready = false;
+  c.avatar = Number.isInteger(avatar) && (avatar as number) >= 0 && (avatar as number) < 64 ? avatar as number : undefined; // pilot portrait index
   if (lobby.members.size === 0) lobby.firstJoin = Date.now();
   lobby.members.set(c.conn, c);
-  for (const o of lobby.members.values()) send(c, { t: "lobbyJoin", id: o.conn, name: o.name, isBot: false, count: lobby.members.size });
-  for (const o of lobby.members.values()) if (o !== c) send(o, { t: "lobbyJoin", id: c.conn, name: c.name, isBot: false, count: lobby.members.size });
+  for (const o of lobby.members.values()) send(c, { t: "lobbyJoin", id: o.conn, name: o.name, isBot: false, avatar: o.avatar, count: lobby.members.size });
+  for (const o of lobby.members.values()) if (o !== c) send(o, { t: "lobbyJoin", id: c.conn, name: c.name, isBot: false, avatar: c.avatar, count: lobby.members.size });
   lobby.lastCd = -1;
 }
 function startMatch() {
   const humans = [...lobby.members.values()]; lobby.members.clear();
-  const players: { name: string; isBot: boolean; ai: boolean; c?: Client }[] = humans.map(c => ({ name: c.name, isBot: false, ai: false, c }));
+  const players: { name: string; isBot: boolean; ai: boolean; c?: Client; avatar?: number }[] = humans.map(c => ({ name: c.name, isBot: false, ai: false, c, avatar: c.avatar }));
   const bn = botNames(MAX, humans.map(c => c.name)); let n = 0; while (players.length < MAX) players.push({ name: bn[n++], isBot: true, ai: true });
   for (let i = players.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [players[i], players[j]] = [players[j], players[i]]; }
   const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim, watchers: new Map(), watched: new Set() };
@@ -75,7 +76,7 @@ function startMatch() {
     ko: (id, by, place, badges) => { toAll({ t: "ko", id, by, place, badges }); const c = m.clients.get(id); if (c) c.alive = false; },
     end: (winner) => { toAll({ t: "matchEnd", winner }); setTimeout(() => matches.delete(m.id), 1000); },
   });
-  const list = players.map((p, i) => ({ id: i, name: p.name, isBot: p.isBot }));
+  const list = players.map((p, i) => ({ id: i, name: p.name, isBot: p.isBot, avatar: p.avatar }));
   players.forEach((p, i) => { if (p.c) { p.c.match = m; p.c.slot = i; p.c.alive = true; m.clients.set(i, p.c); send(p.c, { t: "matchStart", you: i, players: list, seed: m.id }); } });
   matches.set(m.id, m);
   console.log(`match ${m.id} started: ${humans.length} humans + ${MAX - humans.length} bots`);
@@ -90,7 +91,7 @@ wss.on("connection", ws => {
     switch (m.t) {
       case "snap": if (c.match && c.alive) relaySnap(c.match, c, m); break;
       case "spec": if (c.match && !c.alive) setWatch(c.match, c, m.target | 0); break;
-      case "join": joinLobby(c, m.name); break;
+      case "join": joinLobby(c, m.name, m.avatar); break;
       case "leave": leaveCurrent(c); break;
       case "start": if (lobby.members.has(c.conn)) { c.ready = true; } break;
       case "attack": if (c.match && c.alive) { const tier = Math.max(0, Math.min(2, m.tier | 0)) as Tier; c.match.sim.humanAttack(c.slot, m.to | 0, tier, Math.max(0, Math.min(200, Number(m.power) || 0))); } break;

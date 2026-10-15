@@ -3,8 +3,10 @@ import { chromium } from "playwright";
 const URL = process.env.URL || "http://localhost:8090/";
 const b = await chromium.launch();
 const names = ["ALPHA", "BRAVO", "CHARLIE"]; const pages = []; const errs = [];
+const PILOT = { ALPHA: 2, BRAVO: 5, CHARLIE: 3 }; // each human's saved pilot choice
 for (const n of names) {
   const ctx = await b.newContext({ viewport: { width: 1280, height: 720 } }); const p = await ctx.newPage();
+  await p.addInitScript(v => { try { localStorage.setItem("sf101pilot", String(v)); } catch {} }, PILOT[n]);
   if (n === "ALPHA") await p.addInitScript(() => { // stub controller for spectate switching
     const btn = () => ({ pressed: false, touched: false, value: 0 });
     const gp = { id: "Stub Xbox Controller (STANDARD GAMEPAD)", index: 0, connected: true, mapping: "standard", timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
@@ -16,7 +18,7 @@ for (const n of names) {
 }
 const ev = (p, f, a) => p.evaluate(f, a);
 console.log("online:", await Promise.all(pages.map(p => ev(p, () => window.__game.net.online))));
-for (const p of pages) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(300); }
+for (const p of pages) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(300); } // title > name > pilot > lobby
 await pages[0].waitForTimeout(1200);
 for (const p of pages) console.log("lobby", await ev(p, () => [window.__game.state, window.__game.lobbyHumans, window.__game.lobbyCount, window.__game.lobbyLog.join("|"), Math.ceil(window.__game.lobbyCd)]));
 await pages[0].screenshot({ path: "screenshot5.png" });
@@ -24,6 +26,10 @@ for (const p of pages) { await p.keyboard.press("Enter"); } // everyone votes st
 await pages[0].waitForTimeout(1200);
 const humans = await Promise.all(pages.map(p => ev(p, () => [window.__game.state, window.__game.rivals.filter(r => !r.isBot).map(r => r.name + "#" + (r.id + 1)).join(",")])));
 console.log("in match (state, human rivals seen):", humans);
+const seen = await Promise.all(pages.map(p => ev(p, () => Object.fromEntries(window.__game.rivals.filter(r => !r.isBot).map(r => [r.name, r.avatar])))));
+console.log("pilots seen by each human:", seen);
+if (!names.every((n, i) => Object.entries(seen[i]).every(([o, av]) => av === PILOT[o]))) { console.log("FAIL other humans' chosen pilots"); process.exitCode = 1; }
+else console.log("ok   each human sees the others' chosen pilots");
 for (const p of pages) await p.keyboard.down("KeyZ");
 await pages[0].waitForTimeout(3000);
 // ALPHA cashes in a bullet wave on BRAVO
@@ -74,7 +80,7 @@ await pages[0].screenshot({ path: "spectate_end.png" });
 await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(300);
 ok(await ev(pages[0], () => [window.__game.state, window.__game.spec, window.__audio.playing].join()) === "title,-1,false", "ALPHA: Esc on end screen -> title, spectating stopped, music stopped");
 await ev(pages[1], () => { window.__game.quitToTitle(); });
-for (const p of [pages[0], pages[1]]) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(400); }
+for (const p of [pages[0], pages[1]]) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(400); }
 const lb = await Promise.all([0, 1].map(i => ev(pages[i], () => [window.__game.state, window.__game.lobbyHumans])));
 console.log("relobby:", JSON.stringify(lb)); ok(lb.every(x => x[0] === "lobby" && x[1] === 2), "both rejoin the online lobby after leaving to title");
 for (const p of [pages[0], pages[1]]) await p.keyboard.press("Enter");

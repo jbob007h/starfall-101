@@ -10,7 +10,7 @@ export type { Tier } from "./sim";
 export const MAX_PLAYERS = 101;
 export const LOCAL = -1;
 
-export interface PlayerInfo { id: number; name: string; isBot: boolean; }
+export interface PlayerInfo { id: number; name: string; isBot: boolean; /** chosen pilot portrait (humans); bots derive one from their name */ avatar?: number; }
 export interface PlayerState { id: number; hp: number; badges: number; target: number /* LOCAL = targeting you, -2 = other */; }
 export type NetEvent =
   | { type: "lobbyJoin"; player: PlayerInfo; count: number }
@@ -36,7 +36,7 @@ export interface Transport {
   readonly localId: number;
   readonly online: boolean;
   on(cb: (e: NetEvent) => void): void;
-  joinLobby(name: string): void;
+  joinLobby(name: string, avatar?: number): void;
   leaveLobby(): void;
   /** Ask to start now (offline: immediately; online: vote, starts when all humans in lobby agree). */
   requestStart(): void;
@@ -67,15 +67,15 @@ const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 export class LocalSimTransport implements Transport {
   readonly localId = LOCAL; readonly online = false;
   private cbs: Cb[] = []; private phase: "idle" | "lobby" | "match" = "idle";
-  private lobby: PlayerInfo[] = []; private lobbyT = 0; private nextJoin = 0; private countdown = -1; private humanTarget = 0; private name = "YOU";
+  private lobby: PlayerInfo[] = []; private lobbyT = 0; private nextJoin = 0; private countdown = -1; private humanTarget = 0; private name = "YOU"; private avatar: number | undefined;
   private sim: MatchSim | null = null; private map = new SlotMap(0); private stateT = 0;
   constructor(private humansMin = 2, private humansMax = 9, private lobbySeconds = 2.2) {}
   on(cb: Cb) { this.cbs.push(cb); }
   private emit(e: NetEvent) { for (const c of this.cbs) c(e); }
-  joinLobby(name: string) {
-    this.name = name; this.phase = "lobby"; this.lobbyT = 0; this.nextJoin = 0.15; this.countdown = -1; this.lobby = []; this.sim = null;
+  joinLobby(name: string, avatar?: number) {
+    this.name = name; this.avatar = avatar; this.phase = "lobby"; this.lobbyT = 0; this.nextJoin = 0.15; this.countdown = -1; this.lobby = []; this.sim = null;
     this.humanTarget = Math.floor(rnd(this.humansMin, this.humansMax + 1));
-    this.emit({ type: "lobbyJoin", player: { id: LOCAL, name, isBot: false }, count: 1 });
+    this.emit({ type: "lobbyJoin", player: { id: LOCAL, name, isBot: false, avatar }, count: 1 });
   }
   leaveLobby() { this.phase = "idle"; this.sim = null; this.countdown = -1; this.lobby = []; }
   requestStart() { if (this.phase === "lobby") { this.fillBots(); this.countdown = 0.01; } }
@@ -157,11 +157,11 @@ export class WebSocketTransport implements Transport {
     const L = (g: number) => this.map.toLocal(g);
     switch (m.t) {
       case "welcome": this.conn = m.conn; break;
-      case "lobbyJoin": this.emit({ type: "lobbyJoin", player: { id: m.id === this.conn ? LOCAL : m.id, name: m.name, isBot: !!m.isBot }, count: m.count }); break;
+      case "lobbyJoin": this.emit({ type: "lobbyJoin", player: { id: m.id === this.conn ? LOCAL : m.id, name: m.name, isBot: !!m.isBot, avatar: typeof m.avatar === "number" ? m.avatar : undefined }, count: m.count }); break;
       case "lobbyLeave": this.emit({ type: "lobbyLeave", id: m.id, name: m.name, count: m.count }); break;
       case "lobbyCountdown": this.emit({ type: "lobbyCountdown", seconds: m.seconds, humans: m.humans }); break;
       case "matchStart": this.map = new SlotMap(m.you);
-        this.emit({ type: "matchStart", seed: m.seed || 0, players: (m.players as any[]).filter(p => p.id !== m.you).map(p => ({ id: L(p.id), name: p.name, isBot: p.isBot })).sort((a, b) => a.id - b.id) }); break;
+        this.emit({ type: "matchStart", seed: m.seed || 0, players: (m.players as any[]).filter(p => p.id !== m.you).map(p => ({ id: L(p.id), name: p.name, isBot: p.isBot, avatar: typeof p.avatar === "number" ? p.avatar : undefined })).sort((a, b) => a.id - b.id) }); break;
       case "attack": if (m.to === this.map.me) this.emit({ type: "attack", from: L(m.from), to: LOCAL, tier: m.tier, power: m.power, variant: (m.variant | 0) % 4 }); break;
       case "state": this.emit({ type: "state", states: (m.s as number[][]).filter(a => a[0] !== this.map.me).map(([id, hp, badges, tg]) => ({ id: L(id), hp, badges, target: tg ? LOCAL : -2 })) }); break;
       case "hit": if (m.id !== this.map.me) this.emit({ type: "hit", id: L(m.id), from: L(m.from) }); break;
@@ -173,7 +173,7 @@ export class WebSocketTransport implements Transport {
         this.emit({ type: "snap", id: L(m.id), snap: { p: m.p, e, b: m.b || [], pb: m.pb || [], it: m.it || [], tg: (m.tg || []).map(L) } }); break; }
     }
   }
-  joinLobby(name: string) { this.connect(); this.send({ t: "join", name }); }
+  joinLobby(name: string, avatar?: number) { this.connect(); this.send({ t: "join", name, avatar }); }
   leaveLobby() { this.send({ t: "leave" }); }
   requestStart() { this.send({ t: "start" }); }
   sendAttack(to: number, tier: Tier, power: number) { this.send({ t: "attack", to: this.map.toGlobal(to), tier, power }); }

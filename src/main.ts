@@ -3,6 +3,7 @@ import { Audio, renderMusicPreview, TRACKS } from "./audio";
 import { DUEL_HP } from "./sim";
 import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport, Snap } from "./net";
+import { PILOT_NAMES, PILOT_BIOS, PILOT_COUNT, RANDOM_PILOT, loadPilotChoice, savePilotChoice, resolvePilot, pilotForName, validPilot, drawPilot } from "./pilots";
 import { ACTIONS, Act, Dev, binds, bind, clearBind, resetBinds, codeName, actName, actDown, actHit, actVal, keys, pressed, typed, pad, pollPadState, RESERVED } from "./input";
 import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_UP1, BUG_UP2, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
 
@@ -117,7 +118,7 @@ const hit = (...c: string[]) => c.some(k => pressed.has(k));
 const kn = (a: Act) => actName("key", a), pn = (a: Act) => actName("pad", a);
 
 // ---------- types ----------
-interface Rival { id: number; name: string; isBot: boolean; alive: boolean; hp: number; badges: number; skill: number; target: number; retarget: number; sendCd: number;
+interface Rival { id: number; name: string; isBot: boolean; avatar: number; alive: boolean; hp: number; badges: number; skill: number; target: number; retarget: number; sendCd: number;
   flash: number; place: number; regen: number; seed: number; col: number; koT: number; ai: number; koBy: number; }
 interface Enemy { x: number; y: number; t: number; delay: number; path: number; x0: number; y0: number; idx: number; hp: number; col: number; form: number;
   fireCd: number; spr: number; up?: number; hf?: number; entered: boolean; dead: boolean; boss?: boolean; maxhp?: number; sender?: number; vx?: number;
@@ -131,7 +132,7 @@ interface Popup { text: string; x: number; y: number; t: number; col: string; sc
 interface Warn { variant?: number; t: number; tier: number; power: number; sender: number; x: number; }
 interface Wave { t: number; dur: number; power: number; acc: number; pat: number; }
 
-type State = "title" | "name" | "lobby" | "play" | "over" | "win" | "controls";
+type State = "title" | "name" | "pilot" | "lobby" | "play" | "over" | "win" | "controls";
 const SNAP_COLS = [SENT_COL, MAG, YEL, CYA, WHT, "#60ff80"], SNAP_ITEMS = ["dot", "W", "B", "S", "F", "L", "badge", "star"];
 
 class Game {
@@ -152,7 +153,7 @@ class Game {
       zapT: 0, zapCd: 0, bolts: [], tripleQ: [], bombAt: null, chain: 0, chainCol: -1, chainT: 0, eligible: false, freeze: 0, grazes: 0, bestChain: 0, formCd: 2, shake: 0, hitstop: 0, slow: 0, duel: false, dead: false, randTarget: -1, randCd: 0, endT: 0, bombFx: 0 });
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
-      this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
+      this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, avatar: validPilot(pl.avatar) ?? pilotForName(pl.name), alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
     this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.updateMusic({ remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0, tripleReady: false }); audio.startMusic();
     this.popup("STAGE START!", PW / 2, PH / 2 - 20, YEL, 3);
   }
@@ -169,6 +170,8 @@ class Game {
   get vStage() { const r = this.remaining; return this.duel ? 4 : r > 75 ? 0 : r > 50 ? 1 : r > 25 ? 2 : r > 10 ? 3 : 4; }
   hue() { return STAGE_HUE[this.state === "play" || this.state === "over" || this.state === "win" ? this.vStage : 0]; }
   pal(col?: string) { const p = STAGE_PAL[this.state === "play" || this.state === "over" || this.state === "win" ? this.vStage : 1]; return col ? [col, p[0], p[1], col, p[2], p[3], col, p[4]] : p; }
+  /** Saved pilot choice (RANDOM_PILOT = new pick each match) and the pilot flown this match. */
+  pilotChoice = loadPilotChoice(); pilot = resolvePilot(this.pilotChoice); pilotSel = 0; pilotBack: "title" | "lobby" = "title";
   nameBuf: string[] = []; namePos = 0; myKos = 0; myKoBy = -2; lbScroll = 0; lbRep = 0;
   openName() { typed.length = 0; this.state = "name"; this.nameBuf = this.name.split("").slice(0, 10); this.namePos = this.nameBuf.length; audio.init(); }
   updateName() {
@@ -184,7 +187,7 @@ class Game {
     const cyc = (hit("ArrowUp", "PadUp") ? 1 : 0) - (hit("ArrowDown", "PadDown") ? 1 : 0);
     if (cyc && this.namePos < 10) { const cur = b[this.namePos]; b[this.namePos] = cur ? CH[(CH.indexOf(cur) + cyc + CH.length) % CH.length] : cyc > 0 ? "A" : "9"; beep(520); }
     if (hit("Escape")) { this.state = "title"; return; }
-    if (hit("Enter", "PadStart") && b.length) { this.name = b.join(""); try { localStorage.setItem("sf101name", this.name); } catch { /* private mode */ } this.startLobby(); }
+    if (hit("Enter", "PadStart") && b.length) { this.name = b.join(""); try { localStorage.setItem("sf101name", this.name); } catch { /* private mode */ } this.openPilot("lobby"); }
   }
   renderName() {
     const w = 330, h = 120, x = (W - w) / 2, y = 175; ctx.fillStyle = "rgba(6,2,14,0.94)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, MAG);
@@ -200,6 +203,46 @@ class Game {
     drawText(ctx, "KEYBOARD: TYPE A-Z 0-9   BACKSPACE DELETE   ENTER CONFIRM", W / 2, y + 80, CYA, 1, "center");
     drawText(ctx, "PAD: D-PAD UP/DOWN LETTER  LEFT/RIGHT MOVE  A NEXT  B DELETE  START OK", W / 2, y + 92, "#b080ff", 1, "center");
     drawText(ctx, "SAVED ON THIS DEVICE - USED ONLINE AND OFFLINE", W / 2, y + 106, "#8070b0", 1, "center");
+  }
+  openPilot(back: "title" | "lobby") { this.state = "pilot"; this.pilotBack = back; this.pilotSel = this.pilotChoice === RANDOM_PILOT ? PILOT_COUNT : this.pilotChoice; audio.init(); }
+  updatePilot() {
+    const n = PILOT_COUNT + 1, cols = 4, beep = (f: number) => audio.tone(f, 0.04, "square", 0.06);
+    const dx = (hit("ArrowRight", "KeyD", "PadRight") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") ? 1 : 0);
+    const dy = (hit("ArrowDown", "KeyS", "PadDown") ? 1 : 0) - (hit("ArrowUp", "KeyW", "PadUp") ? 1 : 0);
+    if (dx) { this.pilotSel = (this.pilotSel + dx + n) % n; beep(520); }
+    if (dy) { const t = this.pilotSel + dy * cols; if (t >= 0 && t < n) { this.pilotSel = t; beep(520); } }
+    if (hit("Escape", "PadB")) { this.state = this.pilotBack === "lobby" ? "name" : "title"; return; }
+    if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) {
+      this.pilotChoice = this.pilotSel >= PILOT_COUNT ? RANDOM_PILOT : this.pilotSel; savePilotChoice(this.pilotChoice); beep(880);
+      if (this.pilotBack === "lobby") this.startLobby(); else this.state = "title";
+    }
+  }
+  renderPilot() {
+    const n = PILOT_COUNT + 1, sel = this.pilotSel, rnd_ = sel >= PILOT_COUNT, blink = Math.floor(this.realT * 3) % 2 === 0, DIMT = "#8a7ab8";
+    drawText(ctx, "CHOOSE YOUR PILOT", W / 2, 14, YEL, 3, "center", MAG);
+    drawText(ctx, "SHOWN ON YOUR HUD, TO PLAYERS TARGETING YOU AND IN THE FINAL DUEL", W / 2, 36, DIMT, 1, "center");
+    ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(20, 52, 311, 245); this.frame(20, 52, 311, 245, CYA);
+    for (let i = 0; i < n; i++) {
+      const cx = 34 + (i % 4) * 74, cy = 74 + Math.floor(i / 4) * 104, on = i === sel;
+      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 4, cy - 4, 64, 82); this.frame(cx - 4, cy - 4, 64, 82, on ? YEL : "#3a3070");
+      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, cx + 4, cy + 4, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], cx + 28, cy + 64, on ? WHT : DIMT, 1, "center"); }
+      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(cx + 4, cy + 4, 48, 48); drawText(ctx, "?", cx + 28, cy + 16, DIMT, 5, "center"); drawText(ctx, "RANDOM", cx + 28, cy + 64, on ? WHT : DIMT, 1, "center"); }
+      if (on && blink) { drawText(ctx, ">", cx + 4, cy + 64, YEL, 1); drawText(ctx, "<", cx + 49, cy + 64, YEL, 1); }
+    }
+    ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(346, 52, 275, 245); this.frame(346, 52, 275, 245, MAG);
+    const nm = rnd_ ? "RANDOM" : PILOT_NAMES[sel];
+    if (rnd_) { ctx.fillStyle = "#05040c"; ctx.fillRect(358, 64, 140, 140); ctx.fillStyle = MAG; ctx.fillRect(359, 65, 138, 138); ctx.fillStyle = "#0c0824"; ctx.fillRect(360, 66, 136, 136); drawText(ctx, "?", 428, 104, DIMT, 12, "center"); }
+    else drawPilot(ctx, sel, 136, 360, 66, MAG);
+    drawText(ctx, nm, 508, 70, WHT, nm.length > 6 ? 2 : 3);
+    drawText(ctx, rnd_ ? "ANY PILOT" : "PILOT " + String(sel + 1).padStart(2, "0"), 508, 92, MAG, 1);
+    (rnd_ ? ["A NEW PILOT", "EVERY MATCH."] : PILOT_BIOS[nm] ?? []).forEach((l, k) => drawText(ctx, l, 508, 108 + k * 10, DIMT, 1));
+    if (!rnd_) {
+      drawText(ctx, "IN THE MATCH", 360, 212, MAG, 1);
+      drawPilot(ctx, sel, 48, 362, 224, CYA); drawText(ctx, "YOUR HUD", 386, 278, DIMT, 1, "center");
+      drawPilot(ctx, sel, 40, 424, 228, YEL); drawText(ctx, "AS A TARGET", 444, 278, DIMT, 1, "center");
+    }
+    drawText(ctx, (pad.connected ? "D-PAD CHOOSE   A CONFIRM   B BACK" : "ARROWS CHOOSE   ENTER CONFIRM   ESC BACK"), W / 2, 312, CYA, 1, "center");
+    drawText(ctx, "PILOT NAME: " + this.name, W / 2, 330, YEL, 1, "center");
   }
   koName(k: number) { return k === -1 ? this.name : k >= 0 ? this.rivals[k]?.name ?? "?" : "STARFALL"; }
   renderLeaderboard(win: boolean) {
@@ -244,7 +287,7 @@ class Game {
       drawText(ctx, (sel ? "> " : "") + t, bx + bw / 2, y + 4, sel ? YEL : "#8070b0", 1, "center"); });
   }
   endHint() { return pad.connected ? "A/START SELECT  B TITLE" : "ENTER SELECT  ESC TITLE"; }
-  startLobby() { this.spec = -1; this.specSnaps = []; this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.net.joinLobby(this.name); }
+  startLobby() { this.spec = -1; this.specSnaps = []; this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.pilot = resolvePilot(this.pilotChoice); this.net.joinLobby(this.name, this.pilot); }
   onNet(e: NetEvent) {
     switch (e.type) {
       case "lobbyJoin": this.lobbyCount = e.count; if (!e.player.isBot) { this.lobbyHumans++; this.lobbyLog.push((e.player.id === this.net.localId ? e.player.name + " (YOU)" : e.player.name) + " JOINED"); } break;
@@ -284,7 +327,7 @@ class Game {
     const L = ui ? this.uiParts : this.parts;
     for (let i = 0; i < n; i++) { const a = Math.random() * 6.283, v = rnd(0.2, 1) * sp; L.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rnd(0.2, 0.6), max: 0.6, col, s: Math.random() < 0.3 ? 2 : 1 }); }
   }
-  cellPos(i: number) { const left = i < 50, j = left ? i : i - 50, col = j % 10, row = (j / 10) | 0; return { x: (left ? 5 : 465) + col * 17, y: (left ? 192 : 5) + row * 33 }; }
+  cellPos(i: number) { const left = i < 50, j = left ? i : i - 50, col = j % 10, row = (j / 10) | 0; return { x: (left ? 5 : 465) + col * 17, y: 5 + row * 33 }; }
 
   // ---------- targeting ----------
   attackers() { return this.rivals.filter(r => r.alive && r.target === -1); }
@@ -301,7 +344,7 @@ class Game {
   // ---------- main update ----------
   update(dt: number) {
     this.realT += dt; this.titleT += dt; this.padMsgT -= dt;
-    if (this.state !== "name" && this.state !== "controls") {
+    if (this.state !== "name" && this.state !== "controls" && this.state !== "pilot") {
       if (actHit("crt")) { fxCfg.crt = !fxCfg.crt; saveFx(); this.padMsg = "CRT FILTER " + (fxCfg.crt ? "ON" : "OFF"); this.padMsgT = 1.5; }
       if (actHit("lowfx")) { fxCfg.low = !fxCfg.low; saveFx(); this.padMsg = "LOW FX " + (fxCfg.low ? "ON" : "OFF"); this.padMsgT = 1.5; }
     }
@@ -310,13 +353,17 @@ class Game {
       if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
       if (this.state === "lobby") { this.tickLobby(dt); if (hit("Escape", "PadB")) { this.quitToTitle(); return; } if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
       if (this.state === "title") {
-        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 2) % 3; audio.tone(520, 0.04, "square", 0.05); }
-        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 3; audio.tone(520, 0.04, "square", 0.05); }
-        if (actHit("song") || (this.titleSel === 2 && hit("ArrowLeft", "ArrowRight", "KeyA", "KeyD", "PadLeft", "PadRight"))) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); }
+        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 3) % 4; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 4; audio.tone(520, 0.04, "square", 0.05); }
+        const lr = (hit("ArrowRight", "KeyD", "PadRight") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") ? 1 : 0);
+        if (this.titleSel === 1 && lr) { const n = PILOT_COUNT + 1, cur = this.pilotChoice === RANDOM_PILOT ? PILOT_COUNT : this.pilotChoice, nx = (cur + lr + n) % n;
+          this.pilotChoice = nx === PILOT_COUNT ? RANDOM_PILOT : nx; savePilotChoice(this.pilotChoice); audio.init(); audio.tone(780, 0.05, "square", 0.06); }
+        else if (actHit("song") || (this.titleSel === 3 && lr)) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); }
         else if (hit("KeyC", "PadY")) this.openControls();
-        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 2) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel) this.openControls(); else this.openName(); }
+        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 3) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel === 2) this.openControls(); else if (this.titleSel === 1) this.openPilot("title"); else this.openName(); }
       }
       else if (this.state === "name") this.updateName();
+      else if (this.state === "pilot") this.updatePilot();
       else if (this.state === "over" || this.state === "win") {
         this.updateRivals(dt); this.updateSpecParts(dt);
         if (this.spec >= 0 && hit("KeyL", "Tab", "PadY")) { this.specLb = !this.specLb; }
@@ -976,6 +1023,7 @@ class Game {
     if (this.state === "title") { this.renderTitle(); this.drawPadMsg(); return; }
     if (this.state === "lobby") { this.renderTitle(true); this.renderLobby(); this.drawPadMsg(); return; }
     if (this.state === "name") { this.renderTitle(true); this.renderName(); this.drawPadMsg(); return; }
+    if (this.state === "pilot") { this.renderTitle(true, true); this.renderPilot(); this.drawPadMsg(); return; }
     if (this.state === "controls") { this.renderTitle(true, true); this.renderControls(); this.drawPadMsg(); return; }
     // spectating: temporarily swap in the watched player's interpolated state and draw it with the normal renderer
     const sv = this.specOn() && this.realT - this.endT > 1 ? this.specView() : null, saved: Record<string, any> = {};
@@ -1082,9 +1130,10 @@ class Game {
     drawText(ctx, "101-PLAYER NEON SHOOTER BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
     drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 274, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
-    ["LAUNCH", "CONTROLS", "MUSIC"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
-      const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : i === 1 ? "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")" : "MUSIC: < " + audio.soundtrackName + " >" + (pad.connected ? "" : "  (" + kn("song") + ")");
-      drawText(ctx, (on ? "> " : "  ") + lab + (on ? " <" : "  "), W / 2, 230 + i * 14, on ? (blink ? WHT : YEL) : "#8070b0", i === 0 ? 2 : 1, "center"); });
+    ["LAUNCH", "PILOT", "CONTROLS", "MUSIC"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
+      const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : i === 1 ? "PILOT: < " + (this.pilotChoice === RANDOM_PILOT ? "RANDOM" : PILOT_NAMES[this.pilotChoice]) + " >"
+        : i === 2 ? "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")" : "MUSIC: < " + audio.soundtrackName + " >" + (pad.connected ? "" : "  (" + kn("song") + ")");
+      drawText(ctx, (on ? "> " : "  ") + lab + (on ? " <" : "  "), W / 2, 228 + i * 11 + (i ? 3 : 0), on ? (blink ? WHT : YEL) : "#8070b0", i === 0 ? 2 : 1, "center"); });
     const mv = (d: Dev) => { const n = (["up", "down", "left", "right"] as Act[]).map(a => actName(d, a)); return n.every(q => q.startsWith("LS")) ? "L-STICK" : n.every(q => q.startsWith("D-")) ? "D-PAD" : n.join("/"); };
     const help = pad.connected ? ["CONTROLLER: " + mv("pad") + " MOVE   " + pn("fire") + " HOLD FIRE   " + pn("focus") + " HOLD FOCUS   " + pn("bomb") + " BOMB",
       "TARGET: " + pn("tgt0") + " RANDOM  " + pn("tgt1") + " KOS  " + pn("tgt2") + " ATTACKERS  " + pn("tgt3") + " BADGES   START PAUSE",
@@ -1095,9 +1144,14 @@ class Game {
   }
 
   renderPanels() {
-    const LW = 176;
+    const LW = 176, HUDY = 172; // left column: opponents grid on top, this HUD block below it (mirrors the right column)
+    ctx.save(); ctx.translate(0, HUDY);
     // left HUD
     ctx.fillStyle = "#0c0418"; ctx.fillRect(2, 2, LW, 184); this.frame(2, 2, LW, 184, MAG);
+    { // your pilot (the watched pilot while spectating), top-right corner of the HUD
+      const sr = this.specOn() ? this.rivals[this.spec] : null, av = sr ? sr.avatar : this.pilot, nm = sr ? sr.name : this.name;
+      drawPilot(ctx, av, 48, 127, 7, CYA); drawText(ctx, nm.length > 10 ? nm.slice(0, 10) : nm, 151, 58, CYA, 1, "center");
+    }
     const rk = String(this.dead ? this.place : this.remaining);
     drawText(ctx, "RANK", 8, 10, YEL, 2); drawText(ctx, rk, 52, 8, WHT, 3); drawText(ctx, "/101", 52 + textWidth(rk, 3) + 4, 14, MAG, 2);
     drawText(ctx, "SCORE", 8, 34, CYA, 1); drawText(ctx, String(this.score).padStart(9, "0"), 44, 32, WHT, 2);
@@ -1118,9 +1172,13 @@ class Game {
       drawText(ctx, "HP", 36, 150, CYA, 1); if (r.hp > 3) drawText(ctx, String(r.hp), 48, 150, MAG, 1); else for (let i = 0; i < 3; i++) { ctx.fillStyle = i < r.hp ? MAG : DIM; ctx.fillRect(48 + i * 7, 149, 5, 5); }
       drawText(ctx, "BADGES " + r.badges, 76, 150, YEL, 1);
       drawText(ctx, pad.connected ? "R-STICK SWITCHES MODE" : kn("tgt0") + "-" + kn("tgt3") + " SWITCH MODE", 36, 164, "#8070b0", 1);
+      drawPilot(ctx, r.avatar, 40, 130, 124, YEL); // target's pilot
     }
+    ctx.restore();
+    if (this.duel) this.renderDuelCards(LW);
+    else {
     // grids (all 100 opponents)
-    ctx.fillStyle = "#0c0418"; ctx.fillRect(2, 188, LW, 170); this.frame(2, 188, LW, 170, MAG);
+    ctx.fillStyle = "#0c0418"; ctx.fillRect(2, 2, LW, 170); this.frame(2, 2, LW, 170, MAG);
     ctx.fillStyle = "#0c0418"; ctx.fillRect(462, 2, LW, 170); this.frame(462, 2, LW, 170, MAG);
     for (const r of this.rivals) {
       const p = this.cellPos(r.id); let dx = 0, dy = 0, gl = 0, gold = false;
@@ -1128,6 +1186,7 @@ class Game {
         if (Math.abs(k) < 18) { const a = Math.cos(k / 18 * Math.PI / 2) * (1 - q.t / 1.2); dx += cx / d * a * 3; dy += cy / d * a * 3; if (a > gl) { gl = a; gold = q.gold; } } }
       this.drawMini(r, p.x + Math.round(dx), p.y + Math.round(dy), false);
       if (gl > 0.15) { ctx.globalAlpha = Math.min(1, gl); ctx.strokeStyle = gold ? YEL : CYA; ctx.strokeRect(p.x + Math.round(dx) + 0.5, p.y + Math.round(dy) + 0.5, CELL_W - 1, CELL_H - 1); ctx.globalAlpha = 1; }
+    }
     }
     // right lower: targeting / incoming / time
     const RX = 468; ctx.fillStyle = "#0c0418"; ctx.fillRect(462, 174, LW, 184); this.frame(462, 174, LW, 184, CYA);
@@ -1142,6 +1201,23 @@ class Game {
     drawText(ctx, this.net.online ? "ONLINE" : "OFFLINE", RX + 164, 342, this.net.online ? "#60ff80" : "#5a4a8a", 1, "right");
     if (this.warns.length || this.projs.some(p => !p.out)) { if (Math.floor(this.realT * 6) % 2) { ctx.fillStyle = SENT_COL; ctx.fillRect(RX, 314, 164, 18); drawText(ctx, "!! INCOMING ATTACK !!", RX + 82, 321, "#000", 1, "center"); } }
     drawText(ctx, "TIME " + Math.floor(this.time / 60) + ":" + String(Math.floor(this.time % 60)).padStart(2, "0") + (this.calm ? "  CALM PHASE" : "  SPEED x" + this.ramp.toFixed(2)), RX, 342, "#8070b0", 1);
+  }
+  /** Final duel: both grids give way to the two pilots, you on the left, the rival (mirrored to face you) on the right. */
+  renderDuelCards(LW: number) {
+    const sr = this.specOn() ? this.rivals[this.spec] : null;
+    const me = { avatar: sr ? sr.avatar : this.pilot, name: sr ? sr.name : this.name, hp: this.hp, max: 3 };
+    const rv = this.rivals.find(r => r.alive && r.id !== this.spec) ?? this.rivals.find(r => r.place === 1 || r.place === 2);
+    const card = (x0: number, label: string, nm: string, av: number, edge: string, mirror: boolean, hpTxt: string | null, hp: number, max: number) => {
+      ctx.fillStyle = "#0c0418"; ctx.fillRect(x0, 2, LW, 170); this.frame(x0, 2, LW, 170, edge);
+      const px = x0 + (LW - 136) / 2;
+      drawPilot(ctx, av, 136, px, 9, edge, mirror);
+      drawText(ctx, label, px, 149, "#8a7ab8", 1);
+      drawText(ctx, nm.length > 8 ? nm.slice(0, 10) : nm, px, 157, WHT, nm.length > 8 ? 1 : 2);
+      if (hpTxt) drawText(ctx, hpTxt, px + 136, 157, YEL, 1, "right");
+      else for (let i = 0; i < max; i++) { ctx.fillStyle = i < hp ? MAG : DIM; ctx.fillRect(px + 136 - (max - i) * 9 + 2, 157, 7, 7); }
+    };
+    card(2, sr ? "WATCHING" : "YOU", me.name, me.avatar, CYA, false, null, me.hp, me.max);
+    if (rv) card(462, "FINAL RIVAL", rv.name, rv.avatar, SENT_COL, true, "HP " + Math.max(0, rv.hp) + "/" + DUEL_HP, 0, 0);
   }
   renderBottom() { // health + chain meter strip right under the ship
     const x0 = PX - 2, w = PW + 4, y = BY, h = 360 - BY - 2;

@@ -34,6 +34,13 @@ Dots: +10 points and faster health regen (no bombs). Start with 3 bombs. Power-u
 Mini-bosses: SAUCER, SERPENT (hit the head), FORTRESS (turrets, then core), PHANTOM (hit when the eye opens); the design id travels with the attack (`variant`) online.
 Attacks send automatically: when the chain timer ends while ARMED, or instantly at chain 40 (mini-boss); bullet wave tier starts at chain 15.
 
+## Pilots (avatars)
+Seven original pilots in a 16/32-bit Sega RPG portrait style (Phantasy Star IV / Shining Force inspired): ACE, NOVA, UNIT-9, ZEPHYR, TITAN, KITSUNE, EMBER, plus RANDOM.
+- Pick one after entering your name, or any time from the title menu (PILOT: left/right cycles, Enter opens the select screen). Saved locally (`sf101pilot`), sent with your lobby join so other players see it online; bots get a stable pilot from their callsign.
+- HUD: the left column now mirrors the right (players 1-50 on top, rank/score + target panel below). Your pilot sits next to RANK (48px), your target's pilot in the target panel (40px). While spectating, the watched pilot is shown.
+- Final duel: both grids disappear; your pilot fills the left card and the rival's (mirrored to face you) the right, each at 136px with name and HP.
+- Art: `tools/pilots/` draws each pilot as flat cel-shaded shapes (3/4 view) and reduces them to the pixel grid natively at 136/48/40px with a priority filter (no colour blending; eyes and lashes survive small sizes) plus selective dark outlines. `python3 tools/pilots/export.py` (numpy + Pillow) regenerates `src/pilots_data.ts`; bios live in `src/pilots.ts`.
+
 ## Music
 Genesis-style FM soundtrack synthesized live in Web Audio (no audio files), in `src/audio/music/`:
 - `engine.ts` - `MusicEngine`: 2-op FM voices, PSG square harmony, DAC drums, PSG noise, stinger channel. Channels: `fm1` lead, `fm2` echo, `fm3` bass, `fm4` arp, `fm5` pad/guitar, `dac` drums, `sq1` PSG harmony, `psg` noise, `stg` stingers. Every change lands on a musical boundary.

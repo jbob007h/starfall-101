@@ -40,7 +40,7 @@ await tap(0); bb = await B(); ok(bb.pad.fire[0] === "B0" && bb.pad.bomb[0] === "
 await tap(1); ok(await ev(() => window.__game.state) === "title", "B backs out to title");
 // persisted + applied in game
 await p.reload(); await wait(600); bb = await B(); ok(bb.key.bomb[0] === "KeyJ", "bindings persist in localStorage");
-await key("Enter"); await key("Enter"); await wait(300); await key("KeyC"); ok(await ev(() => window.__game.state) === "controls", "C opens CONTROLS from the lobby");
+await key("Enter"); await key("Enter"); await key("Enter"); await wait(300); await key("KeyC"); ok(await ev(() => window.__game.state) === "controls", "C opens CONTROLS from the lobby");
 await key("Escape"); ok(await ev(() => window.__game.state) === "lobby", "Esc returns to the lobby");
 await key("Enter"); await wait(900); ok(await ev(() => window.__game.state) === "play", "match started");
 await ev(() => { window.__game.inv = 1e9; });
@@ -58,7 +58,7 @@ await ev(() => { window.__pad.on = false; }); await wait(150);
 const st = () => ev(() => [window.__game.state, window.__audio.playing, window.__game.paused]);
 await key("Escape"); ok(await ev(() => window.__game.paused), "Esc pauses");
 await key("ArrowDown"); await key("Enter"); let s1 = await st(); ok(s1[0] === "title" && !s1[1] && !s1[2], "pause > QUIT TO TITLE: title, music stopped, unpaused");
-const again = async lbl => { await key("Enter"); await key("Enter"); await wait(300); await key("Enter"); await wait(900); const s = await st(); ok(s[0] === "play" && s[1], lbl); };
+const again = async lbl => { await key("Enter"); await key("Enter"); await key("Enter"); await wait(300); await key("Enter"); await wait(900); const s = await st(); ok(s[0] === "play" && s[1], lbl); };
 await again("new match after quitting from pause");
 await ev(() => { const g = window.__game; g.inv = 0; g.gameOver(); }); await wait(900);
 await key("ArrowRight"); ok(await ev(() => window.__game.endSel) === 1, "game over: RIGHT selects TITLE SCREEN");
@@ -72,7 +72,7 @@ await again("new match after lobby -> title");
 await ev(() => { const g = window.__game; g.inv = 1e9; for (const r of g.rivals) { r.alive = false; r.place = r.place || 2; } }); await wait(800);
 ok(await ev(() => window.__game.state) === "win", "victory screen");
 await ev(() => { window.__pad.on = true; }); await wait(200); await tap(1); s1 = await st(); ok(s1[0] === "title" && !s1[1], "victory: controller B -> title");
-await tap(9); await tap(9); await wait(300); await tap(9); await wait(900); ok(await ev(() => window.__game.state) === "play", "controller: new match after victory -> title");
+await tap(9); await tap(9); await tap(9); await wait(300); await tap(9); await wait(900); ok(await ev(() => window.__game.state) === "play", "controller: new match after victory -> title"); // title > name > pilot > lobby
 await tap(9); await tap(13); await tap(0); ok(await ev(() => window.__game.state) === "title", "controller: pause > QUIT TO TITLE");
 await ev(() => localStorage.removeItem("sf101binds"));
 console.log("missing glyphs:", await ev(() => [...window.__missingGlyphs].join("")), "errors:", errs); if (errs.length) process.exitCode = 1;
