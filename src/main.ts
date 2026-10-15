@@ -14,6 +14,7 @@ const PX = 184, PY = 4, PW = 272, PH = 324; const BY = PY + PH + 3; // bottom HU
 const COLORS = ["#ff3cc8", "#3cf0ff", "#ffe040", "#60ff80"];
 const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
 const SENT = 4; const SENT_COL = "#ff5050";
+const PILOT_COLS = 5; // pilot-select grid columns (13 pilots + RANDOM)
 const MAG = "#ff3cc8", CYA = "#3cf0ff", YEL = "#ffe040", WHT = "#ffffff", DIM = "#2a1440";
 const CELL_W = 16, CELL_H = 32;
 /** Attack tier thresholds (chain size): >= WAVE_AT sends a bullet wave, reaching BOSS_AT auto-sends a mini-boss. */
@@ -206,7 +207,7 @@ class Game {
   }
   openPilot(back: "title" | "lobby") { this.state = "pilot"; this.pilotBack = back; this.pilotSel = this.pilotChoice === RANDOM_PILOT ? PILOT_COUNT : this.pilotChoice; audio.init(); }
   updatePilot() {
-    const n = PILOT_COUNT + 1, cols = 4, beep = (f: number) => audio.tone(f, 0.04, "square", 0.06);
+    const n = PILOT_COUNT + 1, cols = PILOT_COLS, beep = (f: number) => audio.tone(f, 0.04, "square", 0.06);
     const dx = (hit("ArrowRight", "KeyD", "PadRight") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") ? 1 : 0);
     const dy = (hit("ArrowDown", "KeyS", "PadDown") ? 1 : 0) - (hit("ArrowUp", "KeyW", "PadUp") ? 1 : 0);
     if (dx) { this.pilotSel = (this.pilotSel + dx + n) % n; beep(520); }
@@ -223,11 +224,12 @@ class Game {
     drawText(ctx, "SHOWN ON YOUR HUD, TO PLAYERS TARGETING YOU AND IN THE FINAL DUEL", W / 2, 36, DIMT, 1, "center");
     ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(20, 52, 311, 245); this.frame(20, 52, 311, 245, CYA);
     for (let i = 0; i < n; i++) {
-      const cx = 34 + (i % 4) * 74, cy = 74 + Math.floor(i / 4) * 104, on = i === sel;
-      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 4, cy - 4, 64, 82); this.frame(cx - 4, cy - 4, 64, 82, on ? YEL : "#3a3070");
-      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, cx + 4, cy + 4, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], cx + 28, cy + 64, on ? WHT : DIMT, 1, "center"); }
-      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(cx + 4, cy + 4, 48, 48); drawText(ctx, "?", cx + 28, cy + 16, DIMT, 5, "center"); drawText(ctx, "RANDOM", cx + 28, cy + 64, on ? WHT : DIMT, 1, "center"); }
-      if (on && blink) { drawText(ctx, ">", cx + 4, cy + 64, YEL, 1); drawText(ctx, "<", cx + 49, cy + 64, YEL, 1); }
+      // 13 pilots + RANDOM: 5 columns x 3 rows of 48px cards (60px column / 79px row pitch) inside the 311x245 panel
+      const cx = 26 + (i % PILOT_COLS) * 60, cy = 58 + Math.floor(i / PILOT_COLS) * 79, on = i === sel;
+      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 3, cy - 3, 58, 75); this.frame(cx - 3, cy - 3, 58, 75, on ? YEL : "#3a3070");
+      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, cx + 2, cy + 2, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], cx + 26, cy + 58, on ? WHT : DIMT, 1, "center"); }
+      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(cx + 2, cy + 2, 48, 48); drawText(ctx, "?", cx + 26, cy + 14, DIMT, 5, "center"); drawText(ctx, "RANDOM", cx + 26, cy + 58, on ? WHT : DIMT, 1, "center"); }
+      if (on && blink && PILOT_NAMES[i]?.length !== 8) { drawText(ctx, ">", cx - 1, cy + 58, YEL, 1); drawText(ctx, "<", cx + 49, cy + 58, YEL, 1); }
     }
     ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(346, 52, 275, 245); this.frame(346, 52, 275, 245, MAG);
     const nm = rnd_ ? "RANDOM" : PILOT_NAMES[sel];
