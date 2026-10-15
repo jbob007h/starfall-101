@@ -126,6 +126,8 @@ export const PLANS: Plan[] = [
   })),
   // EMERALD SKY: same 8-section match arc as STARFALL ASCENT, Mega Drive "green zone" palette (appended to keep saved indexes)
   { name: "EMERALD SKY", duelTempo: 0, spectate: { track: "emerald", section: "1" }, pick: s => ascentPick("emerald", s), stage: s => ascentIdx(s) },
+  // NEON VELOCITY: same arc; each stage's A section chains into its B variant inside the engine (SectionDef.next)
+  { name: "NEON VELOCITY", duelTempo: 0, spectate: { track: "velocity", section: "1" }, pick: s => ascentPick("velocity", s), stage: s => ascentIdx(s) },
 ];
 
 const BAND: ChannelId[] = ["fm1", "fm2", "fm3", "fm4", "fm5", "sq1"];

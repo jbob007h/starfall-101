@@ -3,6 +3,7 @@
 // layer (lead, echo, bass, drums, pad/stabs, arp, PSG harmony) so the director can bring parts in and out.
 // The three shorter tracks have 3 sections each. In the game a section loops until the director cues another one.
 import type { FMPatch, StingerDef, TrackDef } from "./engine";
+import { VELOCITY } from "./songs_velocity";
 
 export const PATCHES: Record<string, FMPatch> = {
   brass:   { ratio: 1, index: 3.2, indexSus: 1.6, indexDecay: 0.15, ratio2: 2, index2: 0.5, a: 0.01, d: 0.35, s: 0.72, r: 0.12, vol: 0.55, vib: { depth: 16, rate: 5.6, delay: 0.22 } },
@@ -18,6 +19,14 @@ export const PATCHES: Record<string, FMPatch> = {
   emStab:  { ratio: 1, modType: "square", index: 1.9, indexSus: 0.35, indexDecay: 0.03, a: 0.002, d: 0.09, s: 0.2, r: 0.03, vol: 0.3 },
   emArp:   { ratio: 4, index: 1.8, indexSus: 0.1, indexDecay: 0.03, a: 0.002, d: 0.12, s: 0.1, r: 0.06, vol: 0.42 },
   emPad:   { ratio: 2, index: 0.8, indexSus: 0.55, indexDecay: 0.3, a: 0.06, d: 0.5, s: 0.8, r: 0.25, vol: 0.3, unison: 2, spread: 8 },
+  // NEON VELOCITY (street-brawler house palette): gritty detuned lead, deep FM bass, house piano stabs, organ, orchestra hit
+  sorLead:  { ratio: 1, modType: "sawtooth", index: 2.6, indexSus: 1.5, indexDecay: 0.12, ratio2: 2, index2: 0.5, a: 0.004, d: 0.4, s: 0.7, r: 0.1, vol: 0.4, unison: 3, spread: 14, vib: { depth: 18, rate: 5.4, delay: 0.25 } },
+  sorSyn:   { ratio: 1, modType: "sawtooth", index: 3, indexSus: 2, indexDecay: 0.2, ratio2: 3, index2: 0.4, a: 0.006, d: 0.4, s: 0.8, r: 0.12, vol: 0.4, unison: 3, spread: 18, vib: { depth: 20, rate: 5.8, delay: 0.2 } },
+  sorBass:  { ratio: 1, index: 2.4, indexSus: 0.7, indexDecay: 0.07, ratio2: 0.5, index2: 0.9, a: 0.003, d: 0.2, s: 0.6, r: 0.06, vol: 1 },
+  sorPiano: { ratio: 1, index: 2.4, indexSus: 0.4, indexDecay: 0.08, ratio2: 4, index2: 0.5, a: 0.002, d: 0.25, s: 0.25, r: 0.08, vol: 0.3 },
+  sorOrgan: { ratio: 2, index: 1.2, indexSus: 1, indexDecay: 0.2, ratio2: 3, index2: 0.4, a: 0.01, d: 0.3, s: 0.9, r: 0.1, vol: 0.24 },
+  sorArp:   { ratio: 1, modType: "square", index: 1.6, indexSus: 0.3, indexDecay: 0.05, a: 0.002, d: 0.12, s: 0.15, r: 0.05, vol: 0.32 },
+  orchHit:  { ratio: 1, modType: "sawtooth", index: 3.5, indexSus: 1, indexDecay: 0.1, ratio2: 2, index2: 1, a: 0.002, d: 0.18, s: 0.2, r: 0.15, vol: 0.32, unison: 2, spread: 20 },
   gtrStab: { ratio: 1, modType: "sawtooth", index: 2, indexSus: 1, indexDecay: 0.06, a: 0.003, d: 0.12, s: 0.3, r: 0.05, vol: 0.42 },
 };
 
@@ -185,6 +194,7 @@ export const TRACKS: TrackDef[] = [
         fill: { k: "k.......k.......", s: "s.s.s.s.ssssssss" } },
     ],
   },
+  VELOCITY,
 ];
 
 /** Stingers (engine.stinger(name)). "chord" notes walk the current chord: 0 root, 1 third, 2 fifth, 3 octave, ...

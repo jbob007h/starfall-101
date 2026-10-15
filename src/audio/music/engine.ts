@@ -32,22 +32,33 @@ export interface FMPatch {
   unison?: number; spread?: number; vib?: { depth: number; rate: number; delay: number };
 }
 
-export interface DrumBar { k: string; s: string; h: string; }
+/** Optional lines: c clap ("c"), t toms ("h"/"m"/"l" high/mid/low), x orchestra hit on the bass channel ("x"). */
+export interface DrumBar { k: string; s: string; h: string; c?: string; t?: string; x?: string; }
 export interface SectionDef {
   id: string; name: string;
   /** One chord per bar, e.g. "Em C D B" (qualities: "", m, dim, aug, sus4). */
   chords: string;
   /** Lead melody: NOTE-LENGTH tokens in 16th steps ("E5-6", rest "_-4"), "|" between bars (16 steps each). */
   melody: string;
-  /** 16 chars per bar: r root, o octave, f fifth, . rest. */
+  /** 16 chars per bar: r root, o octave, f fifth, s flat seventh, l octave below, . rest.
+   *  Several patterns separated by "|" rotate per bar (or follow bassSeq). */
   bass: string;
+  /** One digit per bar picking the bass pattern (default: bar % patterns). */
+  bassSeq?: string;
   harm: ("pad" | "arp" | "stab")[]; arp?: "up" | "updown";
   /** Arp note length in 16ths (1 = 16ths, 2 = 8ths). */
   arpRate?: number;
-  /** Power-chord stab rhythm, 16 chars: x hit, . rest. */
+  /** Power-chord stab rhythm, 16 chars: x hit, . rest. "|"-separated patterns rotate per bar. */
   stab?: string;
-  /** 16 chars each: k kick / s snare / h closed hat, o open hat. */
-  drums: DrumBar;
+  /** 16 chars each: k kick / s snare / h closed hat, o open hat. An array = pattern variants (see drumSeq). */
+  drums: DrumBar | DrumBar[];
+  /** One digit per bar picking the drum variant (default: variant changes every 4 bars). */
+  drumSeq?: string;
+  /** Rotating fills laid over the last bar of every phrase (fillEvery bars, default 4); the section's last bar uses fill if set. */
+  fills?: Partial<DrumBar>[];
+  fillEvery?: number;
+  /** Section-loop chaining: when this section ends, continue with this section instead of repeating (A/B variants). */
+  next?: string;
   /** Overrides for the section's last bar, and the pattern used by fill(). */
   fill?: Partial<DrumBar>;
   /** Section tempo (default: the track's bpm). */
@@ -63,7 +74,7 @@ export interface TrackDef {
   id: string; title: string; stage: string;
   /** "E minor", "B minor", "C major"... (used for harmony and key-mode stingers). */
   key: string; bpm: number;
-  patches: { lead: string; arp: string; pad: string; stab: string; bass?: string };
+  patches: { lead: string; arp: string; pad: string; stab: string; bass?: string; hit?: string };
   /** "sega" = sampled Mega Drive-style DAC kit for every drum hit (hats/crash too) instead of PSG noise. */
   kit?: "sega";
   /** Stabs voiced as full triads (staccato chordal comping) instead of root/fifth/octave power chords. */
@@ -92,9 +103,10 @@ export interface StingerDef {
 type Ev =
   | { k: "fm"; ch: ChannelId; patch: string; midi: number; len: number; gate: number; vel: number }
   | { k: "psg"; ch: ChannelId; midi: number; len: number; gate: number; vel: number }
-  | { k: "kick" | "snare" | "hat" | "ohat" | "crash"; ch: ChannelId; vel: number };
+  | { k: DrumKind; ch: ChannelId; vel: number };
+type DrumKind = "kick" | "snare" | "hat" | "ohat" | "crash" | "clap" | "tomH" | "tomM" | "tomL";
 const isDrum = (e: Ev) => e.k !== "fm" && e.k !== "psg";
-export interface CompiledSection { id: string; name: string; L: number; bpm: number; bars: string[]; ev: Ev[][]; fillEv: Ev[][]; }
+export interface CompiledSection { id: string; name: string; L: number; bpm: number; bars: string[]; ev: Ev[][]; fillEv: Ev[][]; next: number; }
 export interface CompiledTrack { def: TrackDef; sections: CompiledSection[]; loopSteps: number; tonic: number; }
 
 const PC: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -125,6 +137,8 @@ function drumEvents(d: DrumBar, add: (s: number, e: Ev) => void, b0: number, rol
     if (d.s[s] === "s") add(b0 + s, { k: "snare", ch: "dac", vel: rollFrom8 && s >= 8 ? 0.6 + 0.04 * (s - 8) : 1 });
     if (d.h[s] === "h") add(b0 + s, { k: "hat", ch: "psg", vel: s % 4 === 0 ? 1 : 0.65 });
     if (d.h[s] === "o") add(b0 + s, { k: "ohat", ch: "psg", vel: 0.9 });
+    if (d.c?.[s] === "c") add(b0 + s, { k: "clap", ch: "dac", vel: 1 });
+    const tm = d.t?.[s]; if (tm === "h" || tm === "m" || tm === "l") add(b0 + s, { k: tm === "h" ? "tomH" : tm === "m" ? "tomM" : "tomL", ch: "dac", vel: 1 });
   }
 }
 
@@ -158,13 +172,18 @@ export function compileTrack(tr: TrackDef): CompiledTrack {
       }
       if (sum !== 16) throw new Error(`music: ${tr.id}/${sec.id} bar ${i + 1} has ${sum} steps`);
     });
+    const hit = (st: number, ch: { pc: number; iv: number[] }) => { for (const iv of [0, 7, 12, 12 + ch.iv[1]]) add(st, { k: "fm", ch: "fm3", patch: tr.patches.hit ?? "brass", midi: 48 + ch.pc + iv, len: 3, gate: 0.9, vel: 0.8 }); };
     let prevPad: { chord: string; evs: { len: number }[] } | null = null;
     const rate = sec.arpRate ?? 1;
+    const bassPats = sec.bass.split("|").map(x => x.trim()), stabPats = (sec.stab ?? "").split("|").map(x => x.trim());
+    const kits = Array.isArray(sec.drums) ? sec.drums : [sec.drums], fe = sec.fillEvery ?? 4;
+    const BASS_IV: Record<string, number> = { r: 0, o: 12, f: 7, s: 10, l: -12 };
     chords.forEach((ch, bi) => {
       const b0 = bi * 16, last = bi === chords.length - 1, root = 36 + ch.pc;
+      const bp = bassPats[sec.bassSeq ? +sec.bassSeq[bi % sec.bassSeq.length] % bassPats.length : bi % bassPats.length];
       for (let s = 0; s < 16; s++) {
-        const c = sec.bass[s]; if (!c || c === ".") continue;
-        add(b0 + s, { k: "fm", ch: "fm3", patch: tr.patches.bass ?? "slap", midi: root + (c === "o" ? 12 : c === "f" ? 7 : 0), len: sec.bass[s + 1] === "." ? 2 : 1, gate: 0.85, vel: 1 });
+        const c = bp[s]; if (!c || c === ".") continue;
+        add(b0 + s, { k: "fm", ch: "fm3", patch: tr.patches.bass ?? "slap", midi: root + (BASS_IV[c] ?? 0), len: bp[s + 1] === "." ? 2 : 1, gate: 0.85, vel: 1 });
       }
       if (sec.harm.includes("pad")) {
         if (prevPad && prevPad.chord === ch.name) prevPad.evs.forEach(e => e.len += 16); // held across repeated chords
@@ -179,7 +198,7 @@ export function compileTrack(tr: TrackDef): CompiledTrack {
         for (let s = 0; s < 16; s += rate) add(b0 + s, { k: "fm", ch: "fm4", patch: tr.patches.arp, midi: base + tones[order[((b0 + s) / rate) % order.length]], len: rate, gate: 0.9, vel: s % 4 === 0 ? 1 : 0.7 });
       }
       if (sec.harm.includes("stab") && sec.stab) {
-        const p = sec.stab, base = tr.stabChord ? (ch.pc >= 8 ? 48 : 60) + ch.pc : (ch.pc >= 7 ? 36 : 48) + ch.pc;
+        const p = stabPats[bi % stabPats.length], base = tr.stabChord ? (ch.pc >= 8 ? 48 : 60) + ch.pc : (ch.pc >= 7 ? 36 : 48) + ch.pc;
         const voicing = tr.stabChord ? [0, ch.iv[1], ch.iv[2]] : [0, 7, 12];
         for (let s = 0; s < 16; s++) {
           if (p[s] !== "x") continue;
@@ -187,14 +206,19 @@ export function compileTrack(tr: TrackDef): CompiledTrack {
           for (const iv of voicing) add(b0 + s, { k: "fm", ch: "fm5", patch: tr.patches.stab, midi: base + iv, len, gate: 0.8, vel: 0.9 });
         }
       }
-      drumEvents({ ...sec.drums, ...((last && sec.fill) || {}) }, add, b0, !!(last && sec.fill?.s));
+      const kit = kits[sec.drumSeq ? +sec.drumSeq[bi % sec.drumSeq.length] % kits.length : Math.floor(bi / 4) % kits.length];
+      const phraseEnd = !last && sec.fills && sec.fills.length > 0 && (bi + 1) % fe === 0 ? sec.fills[Math.floor(bi / fe) % sec.fills.length] : null;
+      const over = (last && sec.fill) || phraseEnd || {};
+      drumEvents({ ...kit, ...over }, add, b0, !!(last && sec.fill?.s));
+      const xl = over.x ?? kit.x; if (xl) for (let s = 0; s < 16; s++) if (xl[s] === "x") hit(b0 + s, ch);
       if (sec.crashEvery && bi > 0 && bi % sec.crashEvery === 0) add(b0, { k: "crash", ch: "psg", vel: 0.8 });
     });
     add(0, { k: "crash", ch: "psg", vel: 1 });
     const fillEv: Ev[][] = Array.from({ length: 16 }, () => []);
-    drumEvents({ ...sec.drums, s: DEFAULT_FILL, ...(sec.fill || {}) }, (s, e) => fillEv[s].push(e), 0, true);
-    return { id: sec.id, name: sec.name, L, bpm: sec.bpm ?? tr.bpm, bars: chords.map(c => c.name), ev, fillEv };
+    drumEvents({ ...kits[0], s: DEFAULT_FILL, ...(sec.fill || {}) }, (s, e) => fillEv[s].push(e), 0, true);
+    return { id: sec.id, name: sec.name, L, bpm: sec.bpm ?? tr.bpm, bars: chords.map(c => c.name), ev, fillEv, next: -1 };
   });
+  tr.sections.forEach((sd, i) => { if (sd.next) { const j = sections.findIndex(x => x.id === sd.next); if (j < 0) throw new Error(`music: ${tr.id}/${sd.id} next ${sd.next} missing`); sections[i].next = j; } });
   return { def: tr, sections, loopSteps: sections.reduce((a, s) => a + s.L, 0), tonic: key.tonic };
 }
 
@@ -467,6 +491,9 @@ export class MusicEngine {
       if (this.loopMode === "song") {
         d.sec = (d.sec + 1) % d.track.sections.length;
         if (main) { this.retarget(240 / this.bpmNow, d); if (d.sec === 0) this.emitAt("loop", d, d.next); }
+      } else if (sec.next >= 0) {
+        d.sec = sec.next;
+        if (main) this.retarget(240 / this.bpmNow, d);
       } else if (main) this.emitAt("loop", d, d.next);
     }
   }
@@ -593,6 +620,8 @@ export class MusicEngine {
       case "hat": this.hat(bus, t, e.vel, false); break;
       case "ohat": this.hat(bus, t, e.vel, true); break;
       case "crash": this.crash(bus, t, e.vel); break;
+      case "clap": this.snare(bus, t, e.vel * 0.8); break;
+      case "tomH": case "tomM": case "tomL": this.tom(bus, t, e.vel, e.k === "tomH" ? 200 : e.k === "tomM" ? 145 : 105); break;
     }
   }
   private osc(type: OscillatorType = "sine", f = 0) { const o = this.ctx.createOscillator(); o.type = type; if (f) o.frequency.value = f; return o; }
@@ -641,7 +670,7 @@ export class MusicEngine {
     o.onended = () => { try { g.disconnect(); } catch { /* ignore */ } };
   }
   /** Mega Drive-style drum samples: rendered once, hard-compressed, held at ~13 kHz and quantised to 8 bits like a DAC sample. */
-  private kitBufs: Record<"kick" | "snare" | "hat" | "ohat" | "crash", AudioBuffer> | null = null;
+  private kitBufs: Record<DrumKind, AudioBuffer> | null = null;
   private segaKit() {
     if (this.kitBufs) return this.kitBufs;
     const sr = this.ctx.sampleRate, hold = Math.max(1, Math.round(sr / 13300));
@@ -661,7 +690,11 @@ export class MusicEngine {
     const hat = make(0.05, (t, n) => n * Math.exp(-t / 0.012), 2);
     const ohat = make(0.2, (t, n) => n * Math.exp(-t / 0.07), 2);
     const crash = make(1.1, (t, n) => n * (0.6 * Math.exp(-t / 0.35) + 0.4 * Math.exp(-t / 0.05)), 1.8);
-    return (this.kitBufs = { kick, snare, hat, ohat, crash });
+    // generated after the original five so their random streams (and EMERALD SKY's sound) stay identical
+    const clap = make(0.2, (t, n) => { const b = t < 0.03 ? (Math.floor(t / 0.01) % 1 === 0 ? Math.exp(-(t % 0.01) / 0.003) : 0) : Math.exp(-(t - 0.03) / 0.05); return 1.3 * n * b; }, 3);
+    const tomAt = (f0: number) => { let tp = 0; return make(0.3, (t, n) => { tp += 2 * Math.PI * (f0 + f0 * 0.7 * Math.exp(-t / 0.03)) / 13300; return Math.sin(tp) * Math.exp(-t / 0.11) + 0.3 * n * Math.exp(-t / 0.01); }, 2.4); };
+    const tomH = tomAt(210), tomM = tomAt(150), tomL = tomAt(105);
+    return (this.kitBufs = { kick, snare, hat, ohat, crash, clap, tomH, tomM, tomL });
   }
   private sample(bus: AudioNode, t: number, buf: AudioBuffer, v: number) {
     const s = this.ctx.createBufferSource(), g = this.ctx.createGain(); s.buffer = buf; g.gain.value = 0.8 * v;
@@ -683,6 +716,10 @@ export class MusicEngine {
   private hat(bus: AudioNode, t: number, v: number, open: boolean) {
     const d = open ? 0.16 : 0.035, n = this.noiseSrc(t, d + 0.02), hp = this.filt("highpass", 7000), g = this.decay(t, 0.6 * v, d);
     n.connect(hp); hp.connect(g); g.connect(bus);
+  }
+  private tom(bus: AudioNode, t: number, v: number, f: number) {
+    const o = this.osc("sine"); o.frequency.setValueAtTime(f * 1.6, t); o.frequency.exponentialRampToValueAtTime(f, t + 0.06);
+    const g = this.decay(t, 0.8 * v, 0.25); o.connect(g); g.connect(bus); o.start(t); o.stop(t + 0.27);
   }
   private crash(bus: AudioNode, t: number, v: number) {
     const n = this.noiseSrc(t, 1.35), hp = this.filt("highpass", 4200), g = this.decay(t, 0.5 * v, 1.3);

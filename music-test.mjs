@@ -117,6 +117,39 @@ for (const url of urls) {
     ok(!s.playing && s.mode === "ended", "emerald: victory fanfare ends the music");
     await ev(() => window.__audio.setSoundtrack(0));
   }
+  // NEON VELOCITY: 16 sections (A + chained B per stage), variants, full adaptive walk
+  {
+    const vi = await ev(() => { const a = window.__audio; for (let i = 0; i < 16; i++) { a.setSoundtrack(i); if (a.director.planName === "NEON VELOCITY") return i; } return -1; });
+    ok(vi >= 6, "NEON VELOCITY is selectable after EMERALD SKY (index " + vi + ")");
+    const shape = await ev(() => { const t = window.__audio.music.tracks.find(x => x.def.id === "velocity"); return t.sections.map(x => x.id + ":" + x.bars.length + ">" + (x.next >= 0 ? t.sections[x.next].id : "-")).join(" "); });
+    ok(/^1:16>1b 1b:8>1 2:16>2b/.test(shape) && shape.split(" ").length === 16, "velocity: 16 chained sections " + shape);
+    await ev(() => { const a = window.__audio; a.updateMusic({ remaining: 101, duel: false, hp: 3, bombs: 2, bossActive: false, freeze: false, armed: false }); a.startMusic(); }); await w(1000); s = await st();
+    ok(s.track === "velocity" && s.section === "1" && s.bpm === 132 && s.tier === 0 && s.ch.fm5 === 0, "velocity: start 1 @132 tier 0 " + JSON.stringify({ track: s.track, section: s.section, bpm: s.bpm, tier: s.tier }));
+    for (const [rem, sec] of [[80, "2"], [60, "3"], [45, "4"], [30, "5"], [15, "6"]]) {
+      await gs({ remaining: rem }); await w(2000); s = await st();
+      ok(s.section === sec && s.tr === 0, `velocity: ${rem} left -> section ${sec} (${s.section} @${s.bpm})`);
+    }
+    await ev(() => { for (let i = 0; i < 3; i++) window.__audio.musicEvent("sent", 2); }); await w(5000); s = await st();
+    ok(s.tier === 3 && s.ch.fm2 === 1 && s.ch.sq1 === 1, "velocity: momentum -> tier 3 (" + s.tier + ")");
+    await gs({ remaining: 30, bossActive: true }); await w(2000); s = await st();
+    ok(s.section === "6", "velocity: boss bumps 5 -> 6 (" + s.section + ")"); await gs({ bossActive: false });
+    await gs({ freeze: true }); await w(800); s = await st(); ok(s.drum === "half", "velocity: freeze -> half-time"); await gs({ freeze: false });
+    const vb = await ev(() => { window.__audio.updateMusic({ armed: true, chain: 30 }); return window.__audio.music.build; }); ok(vb > 0.6, "velocity: armed build " + vb.toFixed(2)); await gs({ armed: false, chain: 0 });
+    await gs({ hp: 1, bombs: 0 }); await w(300); ok(await ev(() => window.__audio.danger) === 3, "velocity: critical danger muffle"); await gs({ hp: 3, bombs: 2 });
+    await ev(() => window.__audio.musicEvent("bomb")); await ev(() => window.__audio.musicEvent("ko"));
+    await gs({ remaining: 8 }); await w(2200); s = await st();
+    ok(s.section === "7" && s.tr === 2 && s.bpm >= 150, "velocity: final ten -> 7, key +2 " + JSON.stringify({ section: s.section, tr: s.tr, bpm: s.bpm }));
+    await gs({ remaining: 2, duel: true }); await w(2200); s = await st();
+    ok(s.section === "8" && s.tr === 2 && s.bpm >= 154, "velocity: duel -> 8 " + JSON.stringify({ section: s.section, bpm: s.bpm }));
+    await w(25500); s = await st();
+    ok(s.section === "8b" && s.tr === 2, "velocity: 16-bar duel A chains into its B variant (" + s.section + ")");
+    await ev(() => window.__audio.musicEvent("defeat")); await w(3000); s = await st();
+    ok(s.mode === "spectate" && s.track === "velocity" && s.section === "1" && s.ch.fm1 === 0 && s.tr === 0, "velocity: defeat -> spectate section 1 " + JSON.stringify({ mode: s.mode, section: s.section }));
+    await ev(() => { const a = window.__audio; a.updateMusic({ remaining: 101, duel: false }); a.startMusic(); }); await w(800);
+    await ev(() => window.__audio.musicEvent("victory")); await w(4500); s = await st();
+    ok(!s.playing && s.mode === "ended", "velocity: victory fanfare ends the music");
+    await ev(() => window.__audio.setSoundtrack(0));
+  }
   console.log("sections heard:", (await ev(() => window.__secs)).join(" "));
   ok(!errs.length, "console errors: " + (errs.length ? errs.join(" | ") : "none"));
   await p.close();
