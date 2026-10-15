@@ -6,6 +6,8 @@ export type { GameMusicState, GameMusicEvent };
 /** Soundtrack menu entries (director plans): 0 = STARFALL ASCENT, 1 = classic three-track score, 2-4 = one track. */
 export const SOUNDTRACKS = PLANS.map(p => ({ name: p.name }));
 const LS_ST = "sf101soundtrack";
+/** Mix levels: music pulled down ~7 dB and SFX up ~8.5 dB vs the original mix so effects cut through; a limiter on the master catches the peaks. */
+export const MIX = { master: 0.6, sfx: 1.6, music: 0.55, musicEngine: 0.9 };
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 // Procedural chiptune SFX + Genesis-style adaptive FM music (Web Audio). Music lives in ./music/.
 export class Audio {
@@ -18,17 +20,20 @@ export class Audio {
     if (this.ctx) { this.ctx.resume(); return; }
     const AC = (window as any).AudioContext || (window as any).webkitAudioContext; if (!AC) return;
     const c: AudioContext = new AC(); this.ctx = c;
-    this.master = c.createGain(); this.master.gain.value = 0.5; this.master.connect(c.destination);
-    this.sfxBus = c.createGain(); this.sfxBus.gain.value = 0.6; this.sfxBus.connect(this.master);
+    this.master = c.createGain(); this.master.gain.value = MIX.master;
+    const lim = c.createDynamicsCompressor(); // brick-wall-ish limiter so louder SFX + music can't clip
+    lim.threshold.value = -4; lim.knee.value = 2; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.12;
+    this.master.connect(lim); lim.connect(c.destination);
+    this.sfxBus = c.createGain(); this.sfxBus.gain.value = MIX.sfx; this.sfxBus.connect(this.master);
     this.filter = c.createBiquadFilter(); this.filter.type = "lowpass"; this.filter.frequency.value = 9000; this.filter.Q.value = 6;
-    this.musBus = c.createGain(); this.musBus.gain.value = 0.55; this.musBus.connect(this.master);
-    this.music = new MusicEngine(c, this.musBus, TRACKS, PATCHES, STINGERS); this.music.setVolume(2, 0);
+    this.musBus = c.createGain(); this.musBus.gain.value = MIX.music; this.musBus.connect(this.master);
+    this.music = new MusicEngine(c, this.musBus, TRACKS, PATCHES, STINGERS); this.music.setVolume(MIX.musicEngine, 0);
     this.director = new MusicDirector(this.music); this.director.setPlan(this.soundtrack);
     this.music.on("beat", e => this.heartbeat(e.time), { ahead: true }); // low-health heartbeat locked to the beat
     const len = c.sampleRate; this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   }
-  toggleMute() { this.muted = !this.muted; if (this.master) this.master.gain.value = this.muted ? 0 : 0.5; }
+  toggleMute() { this.muted = !this.muted; if (this.master) this.master.gain.value = this.muted ? 0 : MIX.master; }
   tone(freq: number, dur: number, type: OscillatorType, vol: number, slideTo = 0, when = 0, bus?: AudioNode) {
     const c = this.ctx; if (!c) return; const t = when || c.currentTime;
     const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t);
@@ -145,8 +150,8 @@ export class Audio {
  *  roughly what a strong match sounds like. */
 export async function renderMusicPreview(track: number, secs: number, sr = 44100, demo = false): Promise<ArrayBuffer> {
   const oc = new OfflineAudioContext(2, Math.floor(sr * secs), sr);
-  const bus = oc.createGain(); bus.gain.value = 0.55 * 0.5; bus.connect(oc.destination);
-  const m = new MusicEngine(oc, bus, TRACKS, PATCHES, STINGERS); m.autoTick = false; m.setVolume(2, 0);
+  const bus = oc.createGain(); bus.gain.value = MIX.music * MIX.master; bus.connect(oc.destination);
+  const m = new MusicEngine(oc, bus, TRACKS, PATCHES, STINGERS); m.autoTick = false; m.setVolume(MIX.musicEngine, 0);
   if (demo) {
     const n = m.tracks[track].sections.length, fin = m.tracks[track].def.finalTranspose ?? 2;
     m.on("bar", e => {
