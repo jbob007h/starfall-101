@@ -33,13 +33,15 @@ export interface GameMusicState {
   freeze?: boolean;
   /** Lightning (L) running. */
   lightning?: boolean;
+  /** A bomb power-up is on the playfield while the player holds max bombs (touching it = triple bomb). */
+  tripleReady?: boolean;
 }
-export type GameMusicEvent = "kill" | "sent" | "chainLost" | "hurt" | "bomb" | "tripleBomb" | "bossDown" | "ko" | "incoming" | "victory" | "defeat";
+export type GameMusicEvent = "kill" | "sent" | "chainLost" | "hurt" | "bomb" | "bombBlast" | "tripleBomb" | "bossDown" | "ko" | "incoming" | "victory" | "defeat";
 
 /** Everything tunable in one place. */
 export const DIRECTION = {
   momentum: {
-    kill: 0.008, sent: [0.12, 0.2, 0.32], ko: 0.1, bossDown: 0.25, hurt: -0.15, chainLost: -0.06,
+    kill: 0.008, sent: [0.12, 0.2, 0.32], ko: 0.1, bossDown: 0.25, tripleBomb: 0.2, hurt: -0.15, chainLost: -0.06,
     decayPerSec: 0.02,
   },
   tiers: {
@@ -72,7 +74,8 @@ export const DIRECTION = {
   bomb: { hz: 350, duck: 0.25, secs: 1.6 },          // "the bomb ate the music": band ducks + filter sweeps back open
   chainLost: { hz: 1200, secs: 0.6, lead: 0.35, leadSecs: 1.2 },
   incoming: { lead: 0.3, secs: 1.3 },               // lead ducks under the klaxon, drum fill as bullets arrive
-  tripleBomb: { bpm: 10, bars: 4 },
+  /** Bomb power-up on screen at max bombs = "grab it!": tempo pushes up; touching it (triple bomb) eases it back down. */
+  tripleReady: { bpm: 10, rampUp: 1.5, rampDown: 2.5 },
   lightningArp: 1.4,
   armedBuild: [0.25, 1],                             // snare build level when armed .. at bossAt chain
   bossAt: 40,
@@ -140,7 +143,7 @@ export class MusicDirector {
   private cueKey = ""; private transpose = 0; private last: GameMusicState = { remaining: 101, duel: false, lowHealth: false, chain: 0 };
   private barsSince = 99; private lowPhrases = 0; private bossTier = false; private bossWanted = false;
   private applied: Partial<Record<ChannelId, number>> = {}; private filterHz = 20000; private tempoOff = 0; private drumHalf = false;
-  private dangerHz = 20000; private bombT = -99; private chainLostT = -99; private incomingT = -99; private tripleUntil = 0; private lastT = 0;
+  private dangerHz = 20000; private bombT = -99; private chainLostT = -99; private incomingT = -99; private tripleReady = false; private duelOn = false; private lastT = 0;
   constructor(private m: MusicEngine) {
     m.on("bar", e => this.onBar(e), { ahead: true });
   }
@@ -154,7 +157,7 @@ export class MusicDirector {
   start(s: GameMusicState) {
     this.last = { ...s }; this.mode = "play";
     this.momentum = 0; this.tier = 0; this.barsSince = 99; this.lowPhrases = 0; this.bossTier = this.bossWanted = false;
-    this.bombT = this.chainLostT = this.incomingT = -99; this.tripleUntil = 0; this.lastT = this.now;
+    this.bombT = this.chainLostT = this.incomingT = -99; this.tripleReady = !!s.tripleReady; this.duelOn = s.duel; this.lastT = this.now;
     const cue = this.p.pick(s); this.transpose = this.keyFor(s, cue);
     this.m.setLoopMode("section"); this.m.setDrumMode("normal"); this.drumHalf = false; this.m.setBuild(0);
     this.tempoOff = s.duel ? this.p.duelTempo : 0; this.m.setTempoOffset(this.tempoOff);
@@ -186,9 +189,14 @@ export class MusicDirector {
     // armed -> snare build toward the send
     const [b0, b1] = DIRECTION.armedBuild;
     this.m.setBuild(s.armed ? b0 + (b1 - b0) * Math.min(1, s.chain / DIRECTION.bossAt) : 0);
-    // tempo: duel offset + triple-bomb rush
-    const off = (s.duel ? this.p.duelTempo : 0) + (now < this.tripleUntil ? DIRECTION.tripleBomb.bpm : 0);
-    if (off !== this.tempoOff) { this.m.setTempoOffset(off, off > this.tempoOff ? 0.5 : DIRECTION.duelTempoRamp); this.tempoOff = off; }
+    // tempo: duel offset + "grab the bomb" push (eases back down, slower, once it's touched or gone)
+    const TR = DIRECTION.tripleReady, ready = !!s.tripleReady;
+    const off = (s.duel ? this.p.duelTempo : 0) + (ready ? TR.bpm : 0);
+    if (off !== this.tempoOff) {
+      const ramp = s.duel !== this.duelOn ? DIRECTION.duelTempoRamp : ready ? TR.rampUp : TR.rampDown;
+      this.m.setTempoOffset(off, ramp); this.tempoOff = off;
+    }
+    this.tripleReady = ready; this.duelOn = s.duel;
     // danger level from HP + bombs; its filter closes quickly and reopens slowly (relief)
     const D = DIRECTION; this.danger = this.dangerFor(s);
     const dHz = D.danger.hz[this.danger];
@@ -217,7 +225,8 @@ export class MusicDirector {
       case "chainLost": bump(M.chainLost); this.chainLostT = now; break;
       case "hurt": bump(M.hurt); break;
       case "bomb": this.bombT = now; break;
-      case "tripleBomb": this.bombT = now; this.tripleUntil = now + DIRECTION.tripleBomb.bars * 240 / this.m.bpm; break;
+      case "bombBlast": this.bombT = now; break; // each of the triple bomb's three blasts ducks + sweeps
+      case "tripleBomb": bump(M.tripleBomb); this.m.stinger("triple", { at: "beat" }); break; // reward + relief swell
       case "bossDown": bump(M.bossDown); this.m.stinger("bossDown", { at: "beat" }); break;
       case "ko": bump(M.ko); this.m.stinger("ko", { at: "now" }); break;
       case "incoming": this.incomingT = now; this.m.fill(); break;

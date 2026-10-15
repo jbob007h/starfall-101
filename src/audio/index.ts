@@ -91,12 +91,14 @@ export class Audio {
   lightning() { const c = this.ctx; if (!c) return; const t = c.currentTime; for (let i = 0; i < 6; i++) this.noiseHit(0.04, 0.2, 4000, t + i * 0.05); [0, 7, 12, 19].forEach((s, i) => this.tone(880 * Math.pow(2, s / 12), 0.1, "square", 0.08, 0, t + 0.3 + i * 0.05)); }
   tripleBomb() { const c = this.ctx; if (!c) return; const t = c.currentTime;
     for (let i = 0; i < 3; i++) { this.noiseHit(0.9, 0.6, 50, t + i * 0.18); this.tone(140 - i * 25, 0.9, "sawtooth", 0.3, 25, t + i * 0.18); this.tone(70, 0.6, "sine", 0.6, 30, t + i * 0.18); }
-    [0, 4, 7, 12].forEach((n, i) => this.tone(523 * Math.pow(2, n / 12), 0.2, "square", 0.12, 0, t + 0.6 + i * 0.06)); }
+    // reward arpeggio: up the current chord (octave, 3rd, 5th, 2nd octave) in 16ths on the music's grid
+    const tq = this.q(t + 0.55), sd = this.music?.playing ? 60 / this.music.bpm / 4 : 0.06;
+    [3, 4, 5, 6].forEach((k, i) => this.tone(this.chordHz(k) || 523 * Math.pow(2, [0, 4, 7, 12][i] / 12), 0.2, "square", 0.12, 0, tq + i * sd)); }
   // ---- Music: FM engine (./music/engine.ts) driven by the director (./music/director.ts) ----
   /** Direct engine access for one-off game cues: audio.music.queue({ section: "C" }), setChannel, setTempoOffset, on("bar", ...). */
   music: MusicEngine | null = null;
   director: MusicDirector | null = null;
-  private gs: GameMusicState = { remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0, armed: false, bossActive: false, shield: false, freeze: false, lightning: false };
+  private gs: GameMusicState = { remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0, armed: false, bossActive: false, shield: false, freeze: false, lightning: false, tripleReady: false };
   soundtrack = (() => { try { const v = Number(localStorage.getItem(LS_ST)); return v >= 0 && v < SOUNDTRACKS.length ? Math.floor(v) : 0; } catch { return 0; } })();
   get soundtrackName() { return SOUNDTRACKS[this.soundtrack].name; }
   get playing() { return !!this.music?.playing; }
@@ -118,7 +120,7 @@ export class Audio {
     const root = 57 + ((ch.root - 9 + 12) % 12), n = ch.iv.length;
     return 440 * Math.pow(2, (root + ch.iv[k % n] + 12 * Math.floor(k / n) - 69) / 12);
   }
-  /** Gameplay moments for the music director: kill, sent (data = tier), chainLost, hurt, bomb, tripleBomb, bossDown, ko,
+  /** Gameplay moments for the music director: kill, sent (data = tier), chainLost, hurt, bomb, bombBlast, tripleBomb, bossDown, ko,
    *  incoming (data = tier), victory, defeat. */
   musicEvent(type: GameMusicEvent, data = 0) { this.director?.event(type, data); }
   /** Feed the live game state to the music director (call every frame during a match). */

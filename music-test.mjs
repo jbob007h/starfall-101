@@ -54,6 +54,19 @@ for (const url of urls) {
   const pulse = await ev(() => [0, 1, 2, 3].map(b => window.__audio.director.dangerPulse(b)));
   ok(pulse.every(p => p.heart === 1 && p.tick), "critical: heartbeat every beat + off-beat ticks");
   d = await dz({ hp: 3, bombs: 3 }); ok(d.d === 0, "recovered -> safe");
+  // triple bomb: power-up on screen at max bombs pushes the tempo; touching it = reward swell + one duck per blast + tempo eases back
+  const base = (await st()).bpm;
+  await gs({ tripleReady: true }); await w(2200); s = await st();
+  ok(s.bpm >= base + 9, "bomb power-up on screen at 5 bombs -> tempo up (" + base + " -> " + s.bpm + ")");
+  const mT = (await st()).mom;
+  await ev(() => { const a = window.__audio; a.updateMusic({ tripleReady: false }); a.tripleBomb(); a.musicEvent("tripleBomb"); [0, 180, 360].forEach(d => setTimeout(() => a.musicEvent("bombBlast"), d)); });
+  const bass = () => ev(() => { window.__audio.updateMusic({}); return window.__audio.music.channel("fm3").volume; }); // the game ticks the director every frame
+  await w(250); const duck1 = await bass(); await w(450); const duck3 = await bass();
+  s = await st();
+  ok(s.mom > mT, "triple bomb rewards momentum (" + mT + " -> " + s.mom + ")");
+  ok(duck1 < 0.6 && duck3 < 0.6, "each blast re-ducks the band (bass " + duck1.toFixed(2) + ", " + duck3.toFixed(2) + ")");
+  await w(3200); s = await st();
+  ok(Math.abs(s.bpm - base) <= 1, "tempo eases back down after the pickup (" + s.bpm + ")");
   // final ten key change, duel
   await gs({ remaining: 8 }); await w(2200); s = await st();
   ok(s.section === "7" && s.tr === 1 && s.bpm >= 170, "final ten -> section 7, key +1 " + JSON.stringify({ section: s.section, tr: s.tr, bpm: s.bpm }));

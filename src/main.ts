@@ -153,7 +153,7 @@ class Game {
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
       this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
-    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.updateMusic({ remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0 }); audio.startMusic();
+    this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.updateMusic({ remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0, tripleReady: false }); audio.startMusic();
     this.popup("STAGE START!", PW / 2, PH / 2 - 20, YEL, 3);
   }
   // ---------- network / lobby ----------
@@ -356,7 +356,7 @@ class Game {
     this.updatePlayer(dt); this.updateChain(dt); this.spawnFormations(dt); this.updateEnemies(dt); this.updateBullets(dt);
     this.updateItems(dt); this.updateWaves(dt); this.updateWarns(dt); this.net.tick(dt, this.hints()); this.updateRivals(dt); this.updateProjs(dt); this.updateFx(dt);
     this.randCd -= dt; this.computeTargets();
-    audio.updateMusic({ remaining: this.remaining, duel: this.duel, lowHealth: this.hp === 1, hp: this.hp, bombs: this.bombs, chain: this.chain, armed: this.eligible, bossActive: this.enemies.some(e => e.boss && !e.dead), shield: this.shield, freeze: this.freeze > 0, lightning: this.zapT > 0 });
+    audio.updateMusic({ remaining: this.remaining, duel: this.duel, lowHealth: this.hp === 1, hp: this.hp, bombs: this.bombs, chain: this.chain, armed: this.eligible, bossActive: this.enemies.some(e => e.boss && !e.dead), shield: this.shield, freeze: this.freeze > 0, lightning: this.zapT > 0, tripleReady: this.bombs >= 5 && this.items.some(it => it.kind === "B") });
   }
 
   updatePlayer(dt: number) {
@@ -412,7 +412,7 @@ class Game {
     this.tripleQ = this.tripleQ.map(t => t - dt);
     while (this.tripleQ.length && this.tripleQ[0] <= 0) {
       this.tripleQ.shift(); const k = 3 - this.tripleQ.length; const col = [YEL, MAG, CYA][k - 1];
-      this.shake = 10 + k * 2; this.flash = 0.35; this.flashCol = col; this.bombFx = 0.6; this.bombCol = col;
+      this.shake = 10 + k * 2; this.flash = 0.35; this.flashCol = col; this.bombFx = 0.6; this.bombCol = col; audio.musicEvent("bombBlast");
       this.bombAt = { x: k === 1 ? this.px : rnd(40, PW - 40), y: k === 1 ? this.py : rnd(60, PH - 80) };
       for (const b of this.eb) this.burst(b.x, b.y, b.col, 1, 40); this.eb = [];
       for (const w of this.waves) w.t = w.dur;

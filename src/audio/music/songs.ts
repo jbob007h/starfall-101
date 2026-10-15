@@ -140,6 +140,8 @@ export const STINGERS: Record<string, StingerDef> = {
   sent2: { mode: "chord", patch: "brass", len: 16, notes: [[0, 3, 2], [2, 3, 2], [4, 3, 2], [6, 5, 6], [6, 3, 6, 0.6], [12, 6, 4]], snare: [0, 2, 4], kick: [6], crash: [6] },
   bossDown: { mode: "chord", patch: "brass", len: 16, notes: [[0, 3, 2], [2, 5, 2], [4, 6, 2], [6, 7, 2], [8, 9, 8], [8, 6, 8, 0.6]], kick: [0, 8], crash: [0, 8] },
   ko: { mode: "chord", patch: "bell", len: 4, notes: [[0, 6, 1, 0.9], [1, 9, 3, 0.9]] },
+  // triple bomb: the danger is gone - a warm, slow string swell on the current chord (relief, not alarm)
+  triple: { mode: "chord", patch: "strings", len: 32, notes: [[0, 0, 32, 0.9], [0, 1, 32, 0.75], [0, 2, 32, 0.75], [0, 3, 32, 0.85], [8, 4, 24, 0.6], [16, 5, 16, 0.55]], crash: [0] },
   // match end: Picardy major fanfare / chromatic fall
   victory: { mode: "key", patch: "brass", len: 32, notes: [[0, 0, 2], [2, 4, 2], [4, 7, 2], [6, 12, 6], [6, 7, 6, 0.6], [12, 11, 2], [14, 12, 16], [14, 16, 16, 0.6], [14, 7, 16, 0.5]], kick: [0, 6, 14], snare: [10, 11, 12, 13], crash: [0, 6, 14] },
   defeat: { mode: "key", patch: "synth", len: 28, notes: [[0, 7, 4], [4, 6, 4], [8, 5, 4], [12, 0, 16], [12, -5, 16, 0.6]], kick: [12] },
