@@ -23,8 +23,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
-/** Pilot roster size; must match src/pilots_data.ts (13 AI-art pilots, ids 0-12). */
-const PILOT_COUNT = 13;
+/** Pilot roster size; must match src/pilots_data.ts (14 AI-art pilots, ids 0-13). */
+const PILOT_COUNT = 14;
 interface Client { ws: WebSocket; conn: number; name: string; avatar?: number; match: Match | null; slot: number; ready: boolean; alive: boolean; }
 interface Match { id: number; sim: MatchSim; clients: Map<number, Client>; /* slot -> client */ stateT: number;
   watchers: Map<Client, number>; /* spectator -> watched slot */ watched: Set<number>; /* slots told to stream snapshots */ }
@@ -58,7 +58,7 @@ function leaveCurrent(c: Client) {
 }
 function joinLobby(c: Client, name: string, avatar?: unknown) {
   leaveCurrent(c); c.name = clean(name); c.ready = false;
-  c.avatar = Number.isInteger(avatar) && (avatar as number) >= 0 && (avatar as number) < PILOT_COUNT ? avatar as number : undefined; // pilot portrait index (0..12)
+  c.avatar = Number.isInteger(avatar) && (avatar as number) >= 0 && (avatar as number) < PILOT_COUNT ? avatar as number : undefined; // pilot portrait index (0..13)
   if (lobby.members.size === 0) lobby.firstJoin = Date.now();
   lobby.members.set(c.conn, c);
   for (const o of lobby.members.values()) send(c, { t: "lobbyJoin", id: o.conn, name: o.name, isBot: false, avatar: o.avatar, count: lobby.members.size });
