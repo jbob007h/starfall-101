@@ -1,7 +1,8 @@
-// Soundtrack: three original Thunder Force IV-inspired tracks for the FM engine (see engine.ts for the data format).
-// Each track has three 8-bar sections (A/B/C). In the game each section loops on its own until the
-// director (director.ts) cues another one, so sections double as intensity levels.
-import type { FMPatch, TrackDef } from "./engine";
+// Soundtrack for the FM engine (see engine.ts for the data format). All original, Thunder Force IV-inspired.
+// STARFALL ASCENT is written for the adaptive score: 8 sections that climb in intensity and tempo, each carrying every
+// layer (lead, echo, bass, drums, pad/stabs, arp, PSG harmony) so the director can bring parts in and out.
+// The three shorter tracks have 3 sections each. In the game a section loops until the director cues another one.
+import type { FMPatch, StingerDef, TrackDef } from "./engine";
 
 export const PATCHES: Record<string, FMPatch> = {
   brass:   { ratio: 1, index: 3.2, indexSus: 1.6, indexDecay: 0.15, ratio2: 2, index2: 0.5, a: 0.01, d: 0.35, s: 0.72, r: 0.12, vol: 0.55, vib: { depth: 16, rate: 5.6, delay: 0.22 } },
@@ -14,6 +15,54 @@ export const PATCHES: Record<string, FMPatch> = {
 };
 
 export const TRACKS: TrackDef[] = [
+  {
+    id: "ascent", title: "STARFALL ASCENT", stage: "Full match · 101 to 1", key: "B minor", bpm: 150,
+    patches: { lead: "brass", arp: "bell", pad: "strings", stab: "gtrStab" }, shift: 0, drive: 0,
+    echo: { steps: 3, vol: 0.3 }, finalTranspose: 1,
+    // Main theme (sections 2/5/8): Bm G D A | Bm G Em F#. Each section adds density; layers are mixed by the director.
+    sections: [
+      { id: "1", name: "Ignition", bpm: 150, chords: "Bm G D A Bm G Em F#",
+        melody: "B4-8 D5-8 | D5-8 B4-8 | F#5-8 A5-8 | E5-12 C#5-4 | B4-8 F#5-8 | G5-8 D5-8 | E5-8 G5-8 | F#5-12 C#5-4",
+        bass: "r.......r...o...", harm: ["pad", "arp"], arp: "up", arpRate: 2, harmony: "third",
+        drums: { k: "k.......k.......", s: "........s.......", h: "h...h...h...h..." },
+        fill: { s: "........s.s.ssss" } },
+      { id: "2", name: "Liftoff", bpm: 154, chords: "Bm G D A Bm G Em F#",
+        melody: "B4-4 D5-4 F#5-6 E5-2 | D5-6 E5-2 G5-4 F#5-4 | F#5-6 A5-2 D6-8 | C#6-12 A5-4 | B5-4 A5-4 F#5-6 D5-2 | E5-6 F#5-2 G5-4 B5-4 | A5-6 G5-2 F#5-4 E5-4 | F#5-8 A#5-4 C#6-4",
+        bass: "r.r.o.r.r.r.o.r.", harm: ["pad", "arp"], arp: "up", harmony: "third",
+        drums: { k: "k.....k.k.......", s: "....s.......s...", h: "h.h.h.h.h.h.h.h." },
+        fill: { s: "....s.......ssss" } },
+      { id: "3", name: "Formation", bpm: 158, chords: "G A Bm Bm G A F# F#",
+        melody: "D6-4 B5-4 G5-4 B5-4 | C#6-6 E6-2 A5-8 | B5-6 C#6-2 D6-4 F#6-4 | F#6-12 E6-4 | D6-4 B5-4 G5-4 D6-4 | E6-6 C#6-2 A5-4 E6-4 | F#6-6 E6-2 C#6-4 A#5-4 | C#6-8 A#5-4 F#5-4",
+        bass: "r.ror.ror.ror.ro", harm: ["stab", "arp"], stab: "x..x..x.x..x.x..", arp: "updown", harmony: "third",
+        drums: { k: "k.....k.k.....k.", s: "....s.......s...", h: "h.h.h.h.h.h.h.ho" },
+        fill: { s: "....s...s.s.ssss" } },
+      { id: "4", name: "Crossfire", bpm: 162, chords: "Bm Bm A A G G F# F#",
+        melody: "B5-3 B5-3 D6-2 C#6-2 B5-2 F#5-4 | A5-3 B5-3 D6-2 F#6-8 | A5-3 A5-3 C#6-2 B5-2 A5-2 E5-4 | G5-3 A5-3 C#6-2 E6-8 | G5-3 G5-3 B5-2 A5-2 G5-2 D5-4 | F#5-3 G5-3 B5-2 D6-8 | C#6-3 A#5-3 F#5-2 C#6-2 E6-2 C#6-4 | F#6-8 E6-4 C#6-4",
+        bass: "r..r..r.o..o..r.", harm: ["stab", "arp"], stab: "x..x..x.x..x..x.", arp: "up", harmony: "third",
+        drums: { k: "k..k..k.k..k..k.", s: "....s.......s...", h: "hhhhhhhhhhhhhhhh" },
+        fill: { s: "....s...s.sss.ss" } },
+      { id: "5", name: "Overdrive", bpm: 166, chords: "Bm G D A Bm G Em F#",
+        melody: "B5-2 A5-2 B5-2 D6-2 F#6-6 E6-2 | D6-6 E6-2 G6-4 F#6-4 | F#6-6 A6-2 D6-4 A5-4 | C#6-2 D6-2 E6-2 F#6-2 E6-4 C#6-4 | B5-2 A5-2 B5-2 D6-2 F#6-6 E6-2 | D6-6 E6-2 G6-4 B6-4 | A6-6 G6-2 F#6-4 E6-4 | F#6-4 C#6-4 A#5-4 C#6-4",
+        bass: "r.rrr.rrr.rrr.rr", harm: ["pad", "arp"], arp: "updown", harmony: "third", crashEvery: 4,
+        drums: { k: "k.kk..k.k.kk..k.", s: "....s.......s...", h: "h.hoh.hoh.hoh.ho" },
+        fill: { s: "....s...ssssssss" } },
+      { id: "6", name: "Warzone", bpm: 170, chords: "Bm D G A Bm D Em F#",
+        melody: "B5-2 C#6-2 D6-2 F#6-2 E6-2 D6-2 C#6-2 B5-2 | A5-4 F#5-4 A5-4 D6-4 | G5-2 A5-2 B5-2 D6-2 G6-4 F#6-2 E6-2 | E6-8 C#6-4 A5-4 | B5-2 C#6-2 D6-2 F#6-2 B6-4 A6-2 F#6-2 | A6-8 F#6-4 D6-4 | G6-4 F#6-2 E6-2 D6-4 B5-4 | A#5-2 C#6-2 E6-2 F#6-2 E6-2 C#6-2 A#5-2 F#5-2",
+        bass: "rorororororororo", harm: ["stab", "arp"], stab: "x.x.x.x.x.x.x.x.", arp: "up", harmony: "third", crashEvery: 4,
+        drums: { k: "k.k.k.k.k.k.k.k.", s: "....s.......s..s", h: "hhhhhhhhhhhhhhhh" },
+        fill: { s: "s.s.s.s.ssssssss" } },
+      { id: "7", name: "Final ten", bpm: 176, lead: "synth", chords: "Bm F# G F# Em F# G F#",
+        melody: "B5-6 A#5-2 B5-4 D6-4 | C#6-6 B5-2 A#5-8 | B5-6 A#5-2 B5-4 G6-4 | F#6-12 _-4 | E6-6 D6-2 B5-4 G5-4 | A#5-6 B5-2 C#6-4 E6-4 | D6-4 E6-4 F#6-4 G6-4 | F#6-4 E6-4 C#6-4 A#5-4",
+        bass: "rrorrorrorrorror", harm: ["pad", "arp"], arp: "updown", harmony: "sixth", crashEvery: 4,
+        drums: { k: "k.kkk.kkk.kkk.kk", s: "....s.......s...", h: "o...o...o...o..." },
+        fill: { s: "....s...ssssssss" } },
+      { id: "8", name: "Last duel", bpm: 184, chords: "Bm G D A Bm G Em F#",
+        melody: "B5-4 D6-4 F#6-6 E6-2 | D6-6 E6-2 G6-4 F#6-4 | F#6-6 A6-2 F#6-4 D6-4 | C#6-4 E6-4 A6-8 | B6-4 A6-4 F#6-6 D6-2 | E6-6 F#6-2 G6-4 B6-4 | A6-6 G6-2 F#6-4 E6-4 | F#6-2 E6-2 C#6-2 A#5-2 F#5-2 A#5-2 C#6-2 E6-2",
+        bass: "rorororororororo", harm: ["stab", "pad", "arp"], stab: "x..x..x.x..x.x..", arp: "up", harmony: "sixth", crashEvery: 2,
+        drums: { k: "kkkkkkkkkkkkkkkk", s: "....s.......s...", h: "h.hoh.hoh.hoh.ho" },
+        fill: { k: "k.......k.......", s: "s.s.s.s.ssssssss" } },
+    ],
+  },
   {
     id: "aurora", title: "AURORA BREACH", stage: "Stage 1 · Open orbit", key: "E minor", bpm: 172,
     patches: { lead: "brass", arp: "bell", pad: "strings", stab: "gtrStab" }, shift: 0, drive: 0,
@@ -81,3 +130,17 @@ export const TRACKS: TrackDef[] = [
     ],
   },
 ];
+
+/** Stingers (engine.stinger(name)). "chord" notes walk the current chord: 0 root, 1 third, 2 fifth, 3 octave, ...
+ *  "key" notes are semitones above the song's tonic (B for STARFALL ASCENT), key changes included. */
+export const STINGERS: Record<string, StingerDef> = {
+  // attack sent, by tier: quick lift / rising run / mini-boss fanfare
+  sent0: { mode: "chord", patch: "brass", len: 8, notes: [[0, 3, 2, 0.8], [2, 4, 2, 0.8], [4, 6, 4, 0.9]] },
+  sent1: { mode: "chord", patch: "brass", len: 8, notes: [[0, 2, 1], [1, 3, 1], [2, 4, 1], [3, 5, 1], [4, 6, 4]], crash: [0] },
+  sent2: { mode: "chord", patch: "brass", len: 16, notes: [[0, 3, 2], [2, 3, 2], [4, 3, 2], [6, 5, 6], [6, 3, 6, 0.6], [12, 6, 4]], snare: [0, 2, 4], kick: [6], crash: [6] },
+  bossDown: { mode: "chord", patch: "brass", len: 16, notes: [[0, 3, 2], [2, 5, 2], [4, 6, 2], [6, 7, 2], [8, 9, 8], [8, 6, 8, 0.6]], kick: [0, 8], crash: [0, 8] },
+  ko: { mode: "chord", patch: "bell", len: 4, notes: [[0, 6, 1, 0.9], [1, 9, 3, 0.9]] },
+  // match end: Picardy major fanfare / chromatic fall
+  victory: { mode: "key", patch: "brass", len: 32, notes: [[0, 0, 2], [2, 4, 2], [4, 7, 2], [6, 12, 6], [6, 7, 6, 0.6], [12, 11, 2], [14, 12, 16], [14, 16, 16, 0.6], [14, 7, 16, 0.5]], kick: [0, 6, 14], snare: [10, 11, 12, 13], crash: [0, 6, 14] },
+  defeat: { mode: "key", patch: "synth", len: 28, notes: [[0, 7, 4], [4, 6, 4], [8, 5, 4], [12, 0, 16], [12, -5, 16, 0.6]], kick: [12] },
+};
