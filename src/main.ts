@@ -356,7 +356,7 @@ class Game {
     this.updatePlayer(dt); this.updateChain(dt); this.spawnFormations(dt); this.updateEnemies(dt); this.updateBullets(dt);
     this.updateItems(dt); this.updateWaves(dt); this.updateWarns(dt); this.net.tick(dt, this.hints()); this.updateRivals(dt); this.updateProjs(dt); this.updateFx(dt);
     this.randCd -= dt; this.computeTargets();
-    audio.updateMusic({ remaining: this.remaining, duel: this.duel, lowHealth: this.hp === 1, chain: this.chain });
+    audio.updateMusic({ remaining: this.remaining, duel: this.duel, lowHealth: this.hp === 1, chain: this.chain, armed: this.eligible, bossActive: this.enemies.some(e => e.boss && !e.dead), shield: this.shield, freeze: this.freeze > 0, lightning: this.zapT > 0 });
   }
 
   updatePlayer(dt: number) {
@@ -405,7 +405,7 @@ class Game {
   }
   /** Bomb pickup at max stock: three staggered full-screen blasts (~3x bomb). Free, and keeps your chain (reward). */
   tripleBomb() {
-    this.tripleQ = [0, 0.18, 0.36]; audio.tripleBomb(); this.popup("TRIPLE BOMB!", PW / 2, PH / 2 - 10, YEL, 4); this.inv = Math.max(this.inv, 1.5);
+    this.tripleQ = [0, 0.18, 0.36]; audio.tripleBomb(); audio.musicEvent("tripleBomb"); this.popup("TRIPLE BOMB!", PW / 2, PH / 2 - 10, YEL, 4); this.inv = Math.max(this.inv, 1.5);
   }
   updateTriple(dt: number) {
     if (!this.tripleQ.length) return;
@@ -422,7 +422,7 @@ class Game {
     }
   }
   bomb() {
-    if (this.bombs <= 0) return; this.bombs--; audio.bomb(); this.shake = 8; this.flash = 0.4; this.flashCol = MAG; this.bombFx = 0.6; this.bombCol = MAG; this.bombAt = null;
+    if (this.bombs <= 0) return; this.bombs--; audio.bomb(); audio.musicEvent("bomb"); this.shake = 8; this.flash = 0.4; this.flashCol = MAG; this.bombFx = 0.6; this.bombCol = MAG; this.bombAt = null;
     for (const b of this.eb) this.burst(b.x, b.y, b.col, 1, 30); this.eb = [];
     for (const w of this.waves) w.t = w.dur;
     for (const e of this.enemies) { if (e.boss) { this.bombBoss(e); } else { e.hp = 0; this.killEnemy(e, false); } }
@@ -441,7 +441,7 @@ class Game {
     this.popup(name, PW / 2, PH / 2 - 40, [CYA, MAG, YEL][tier], 2); this.popup("POWER " + power + " TO " + tn, PW / 2, PH / 2 - 26, WHT, 1);
     for (const id of this.targets) { this.net.sendAttack(id, tier as 0 | 1 | 2, power); const cp = this.cellPos(id); this.projs.push({ sx: PX + this.px, sy: PY + this.py, ex: cp.x + CELL_W / 2, ey: cp.y + CELL_H / 2, t: 0, dur: 0.7, out: true, tier, power, target: id, sender: -1, col: [CYA, MAG, YEL][tier] }); }
     if (tier === 2) this.cutIn = { t: 0, name: tn }; // portrait banner, no pause
-    this.score += power * 500; audio.sent(tier); this.flash = 0.15; this.flashCol = [CYA, MAG, YEL][tier];
+    this.score += power * 500; audio.sent(tier); audio.musicEvent("sent", tier); this.flash = 0.15; this.flashCol = [CYA, MAG, YEL][tier];
     this.burst(this.px, this.py, YEL, 30, 140);
     this.chain = 0; this.chainCol = -1; this.chainT = 0; this.eligible = false; this.starBoost = 0;
   }
@@ -453,7 +453,7 @@ class Game {
     if (this.freeze > 0) { this.freeze -= dt; return; }
     this.chainT -= dt;
     if (this.chainT <= 0 && this.eligible) { this.cashIn(); return; }
-    if (this.chainT <= 0) { this.popup("CHAIN LOST", PW / 2, 60, "#888888", 2); audio.chainLost(); this.chain = 0; this.chainCol = -1; this.eligible = false; }
+    if (this.chainT <= 0) { this.popup("CHAIN LOST", PW / 2, 60, "#888888", 2); audio.chainLost(); audio.musicEvent("chainLost"); this.chain = 0; this.chainCol = -1; this.eligible = false; }
   }
 
   // ---------- formations ----------
@@ -598,7 +598,7 @@ class Game {
     const col = allCols[e.col];
     this.burst(e.x, e.y, col, e.boss ? 80 : 14, e.boss ? 160 : 90); this.burst(e.x, e.y, WHT, 4, 40);
     if (e.boss) {
-      this.shake = 10; this.hitstop = 10; audio.explodeBig(); this.flash = 0.3; this.flashCol = YEL; this.score += 20000;
+      this.shake = 10; this.hitstop = 10; audio.explodeBig(); audio.musicEvent("bossDown"); this.flash = 0.3; this.flashCol = YEL; this.score += 20000;
       this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3);
       this.reflect(e.sender ?? -1, 1, 12);
       for (let i = 0; i < 12; i++) this.items.push({ x: e.x + rnd(-15, 15), y: e.y + rnd(-10, 10), vx: rnd(-30, 30), vy: rnd(-60, 0), kind: "dot", t: 0 });
@@ -611,7 +611,7 @@ class Game {
     if (byShot) {
       this.chainAdd(e.col, 0);
       this.score += Math.round(100 * (1 + (e.up ?? 0)) * (1 + this.chain / 10));
-      audio.kill(this.chain);
+      audio.kill(this.chain); audio.musicEvent("kill");
       if (f) { f.killed++; if (f.killed >= f.total && !f.lost) this.formClear(f, e); }
     } else if (f) f.lost = true;
     const nd = ri(1, 2) + (e.up ?? 0); for (let i = 0; i < nd; i++) this.items.push({ x: e.x, y: e.y, vx: rnd(-20, 20), vy: rnd(-50, -10), kind: "dot", t: 0 });
@@ -639,14 +639,14 @@ class Game {
     if (this.inv > 0 || this.dead) return;
     if (this.shield) { this.shield = false; this.inv = 1.5; this.popup("SHIELD!", this.px, this.py - 14, CYA, 2); audio.power(); this.clearNear(50); return; }
     this.hp--; this.inv = 2.2; this.regen = 20; this.weapon = Math.max(0, this.weapon - 1);
-    audio.hurt(); this.shake = 9; this.hitstop = 8; this.flash = 0.25; this.flashCol = "#ff2040"; this.burst(this.px, this.py, SENT_COL, 30, 120);
+    audio.hurt(); audio.musicEvent("hurt"); this.shake = 9; this.hitstop = 8; this.flash = 0.25; this.flashCol = "#ff2040"; this.burst(this.px, this.py, SENT_COL, 30, 120);
     this.clearNear(60);
     if (this.hp === 1) { this.slow = 0.6; this.popup("DANGER!", PW / 2, PH / 2, SENT_COL, 3); }
     if (this.hp <= 0) this.gameOver();
   }
   clearNear(r: number) { this.eb = this.eb.filter(b => { const d = Math.hypot(b.x - this.px, b.y - this.py) > r; if (!d) this.burst(b.x, b.y, b.col, 1, 30); return d; }); }
   gameOver() {
-    this.dead = true; this.place = this.aliveAI + 1; this.myKoBy = this.lastAttacker; this.lbScroll = Math.max(0, this.place - 13); this.net.sendKO(this.lastAttacker); this.state = "over"; this.endT = this.realT; audio.stopMusic(); audio.explodeBig();
+    this.dead = true; this.place = this.aliveAI + 1; this.myKoBy = this.lastAttacker; this.lbScroll = Math.max(0, this.place - 13); this.net.sendKO(this.lastAttacker); this.state = "over"; this.endT = this.realT; audio.musicEvent("defeat"); audio.explodeBig();
     this.spec = -1; this.specLb = false; this.watched = false; this.startSpectate(this.lastAttacker);
     this.burst(this.px, this.py, YEL, 80, 200); this.burst(this.px, this.py, CYA, 60, 150); this.shake = 14;
   }
@@ -750,7 +750,7 @@ class Game {
       if (this.watched) { this.snapT -= dt; if (this.snapT <= 0) { this.snapT = Math.max(0, this.snapT + 1 / 15); this.net.sendSnap(this.buildSnap()); } } // someone spectates us
     }
     if (!this.duel && this.aliveAI === 1 && !this.dead) { this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.warpT = 1.4; this.flash = 0.4; this.flashCol = YEL; }
-    if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.buildWinStars(); this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.stopMusic(); audio.cashIn(2); }
+    if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.buildWinStars(); this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.musicEvent("victory"); }
   }
   koRival(v: Rival, killer: number, place: number, badges: number) {
     v.alive = false; v.hp = 0; v.place = place; v.koT = 0; v.badges = badges; v.koBy = killer; if (killer === -1) this.myKos++;
@@ -760,7 +760,7 @@ class Game {
     // background starfall streak for every KO
     this.streaks.push({ x: rnd(0, PW), y: -10, vx: rnd(-40, 40), vy: rnd(160, 240), life: 2, col: COLORS[v.col], big: false });
     if (killer === -1) {
-      this.popup("K.O.!", PW / 2, PH / 2 + 20, YEL, 3); audio.ko(); this.shake = 4; this.score += 10000;
+      this.popup("K.O.!", PW / 2, PH / 2 + 20, YEL, 3); audio.ko(); audio.musicEvent("ko"); this.shake = 4; this.score += 10000;
       const nb = 1 + Math.floor(v.badges / 2);
       for (let i = 0; i < nb; i++) { this.items.push({ x: rnd(30, PW - 30), y: -10 - i * 10, vx: 0, vy: 40, kind: "badge", t: 0 }); }
       const fromLeft = Math.random() < 0.5; // catchable shooting star
@@ -779,7 +779,7 @@ class Game {
         } else {
           if (this.dead) continue;
           if (this.shield) { this.shield = false; this.popup("ATTACK BLOCKED!", PW / 2, 40, CYA, 2); audio.power(); continue; }
-          this.warns.push({ t: 1.3, tier: p.tier, power: p.power, sender: p.sender, x: p.ex - PX, variant: p.variant }); audio.incoming(p.tier);
+          this.warns.push({ t: 1.3, tier: p.tier, power: p.power, sender: p.sender, x: p.ex - PX, variant: p.variant }); audio.incoming(p.tier); audio.musicEvent("incoming", p.tier);
           this.popup("INCOMING " + ["ENEMY RUSH!", "BULLET WAVE!", "MINI-BOSS!"][p.tier], PW / 2, 26, SENT_COL, 2);
           this.popup("FROM " + (this.rivals[p.sender]?.name || "?"), PW / 2, 42, "#ff9090", 1);
         }
@@ -1299,7 +1299,7 @@ class Game {
   }
 }
 
-const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = TRACKS.map(t => ({ id: t.id, name: t.title, bpm: t.bpm, sections: t.sections.map(s => ({ id: s.id, name: s.name, bars: s.chords.trim().split(/\s+/).length })) }));
+const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = TRACKS.map(t => ({ id: t.id, name: t.title, bpm: t.bpm, sections: t.sections.map(s => ({ id: s.id, name: s.name, bpm: s.bpm, bars: s.chords.trim().split(/\s+/).length })) }));
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };

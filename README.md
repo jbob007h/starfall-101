@@ -36,26 +36,33 @@ Attacks send automatically: when the chain timer ends while ARMED, or instantly 
 
 ## Music
 Genesis-style FM soundtrack synthesized live in Web Audio (no audio files), in `src/audio/music/`:
-- `engine.ts` - `MusicEngine`: 2-op FM voices, DAC drums, PSG noise; channels FM1 lead, FM2 echo, FM3 bass, FM4 arp, FM5 pad/guitar, FM6 DAC, PSG. Every change lands on a musical boundary.
-- `songs.ts` - three tracks (AURORA BREACH 172 BPM, HULL INTEGRITY 140, LAST VECTOR 156), each with 8-bar sections A/B/C that loop on their own, so sections work as intensity levels.
-- `director.ts` - maps game state to the engine; edit this to change how the music reacts. Default ADAPTIVE FM plan: Aurora A/B/C (101-51), Hull A/B/C (50-11), Last Vector B (10-6), A (5-3), C for the duel (+8 BPM). Last hit point muffles the mix (low-pass) and adds a heartbeat on the beat; chain >= 15 brings the arp forward. The SWITCH SOUNDTRACK key cycles ADAPTIVE FM or a single track.
+- `engine.ts` - `MusicEngine`: 2-op FM voices, PSG square harmony, DAC drums, PSG noise, stinger channel. Channels: `fm1` lead, `fm2` echo, `fm3` bass, `fm4` arp, `fm5` pad/guitar, `dac` drums, `sq1` PSG harmony, `psg` noise, `stg` stingers. Every change lands on a musical boundary.
+- `songs.ts` - **STARFALL ASCENT** (B minor, 8 sections x 8 bars, 150 -> 184 BPM, every section carries every layer) plus AURORA BREACH, HULL INTEGRITY, LAST VECTOR (3 sections each), and the stingers.
+- `director.ts` - game -> music. Edit `DIRECTION` to tune it.
 
-The game calls `audio.updateMusic({ remaining, duel, lowHealth, chain })` every frame and `audio.pauseMusic(paused)`. For one-off moments, use `audio.music` (the engine) directly:
+How the default score (STARFALL ASCENT) reacts:
+- **Section = match progress**: 101-86 Ignition, 85-71 Liftoff, 70-56 Formation, 55-41 Crossfire, 40-26 Overdrive, 25-11 Warzone, final ten (key up a half step), duel. A mini-boss on screen bumps it one section up with the full band; it drops back when the boss is gone.
+- **Layers = momentum**, a hidden 0..1 meter: kills +0.008, attack sent +0.12/+0.2/+0.32 by tier, KO +0.1, boss down +0.25, hit -0.15, chain lost -0.06, drains 0.02/s. Tiers: 0 lead+bass+drums, 1 +pad/stabs, 2 +arp, 3 +echo + PSG harmony. Changes only on 4-bar phrase lines, one tier at a time, at least 8 bars apart, and dropping needs 2 phrases below a lower line. Finishing a chain raises momentum, so the music never drops when an attack sends.
+- **Moments**: attack sent = stinger on the next beat (bigger per tier); ARMED = snare build that grows with the chain; boss down / KO / victory / defeat stingers; incoming attack = lead ducks under the klaxon + drum fill; bomb = band ducks and the filter sweeps open; triple bomb = +10 BPM for 4 bars; F freeze = half-time drums and the section holds; L lightning = arp up front; S shield = warmer filter; last hit point = muffled + heartbeat on the beat; knocked out = defeat sting, then muffled Ignition with the lead out while spectating; victory = fanfare, music ends.
+- **SFX on the grid**: chain kills climb the current chord's notes; attack chime, star pickup and cash-in fanfare land on the next 16th.
+- SWITCH SOUNDTRACK cycles STARFALL ASCENT, CLASSIC FM (the three short tracks in sequence) and each short track alone.
+
+The game calls `audio.updateMusic({ remaining, duel, lowHealth, chain, armed, bossActive, shield, freeze, lightning })` every frame, `audio.musicEvent(name, data)` for moments and `audio.pauseMusic(paused)`. For one-off cues use `audio.music` (the engine) directly:
 
 | Call | Effect |
 |---|---|
-| `queue({ track?, section?, at?, fade? })` | switch track and/or section on the next `"now"` (16th) / `"beat"` / `"bar"` (default) / `"section"` boundary; `fade` = crossfade seconds on a track change |
-| `play(track, { section?, loop? })` / `stop(fade?)` | start immediately / stop |
-| `pause()` / `resume()` | freeze and continue from the same step |
-| `setTempo(bpm \| null, ramp?)` / `setTempoOffset(delta, ramp?)` | absolute override / offset from each track's BPM, ramped in seconds |
-| `setChannel(id, { mute?, volume? }, fade?)` / `resetChannels()` | per-channel mix (`fm1 fm2 fm3 fm4 fm5 dac psg`), kept across track changes |
-| `setFilter(hz \| null, ramp?)` / `setVolume(v, ramp?)` | master low-pass (3390 = Model 1 Genesis) / volume |
-| `setLoopMode("section" \| "song")` | loop the current section (game default) or play A-B-C in order |
-| `on(type, fn, { ahead? })` | `beat` `bar` `section` `track` `loop` `stop` events; `ahead: true` fires ~120 ms early with the exact audio `time` for beat-locked SFX |
-| `state` / `bpm` / `beatPhase()` | audible track, section, bar, chord, tempo, channel settings |
+| `queue({ track?, section?, transpose?, at?, fade? })` | switch track / section / key on the next `"now"` (16th) / `"beat"` / `"bar"` (default) / `"section"` boundary; `fade` = crossfade seconds on a track change |
+| `stinger(name \| def, { at?, end? })` | play a stinger on the next boundary; `end: true` fades the band and stops after it |
+| `fill()` / `setDrumMode("half" \| "normal")` / `setBuild(0..1)` | drum fill next bar / half-time drums / snare build-up |
+| `play(track, { section?, loop?, transpose? })` / `stop(fade?)` / `pause()` / `resume()` | transport |
+| `setTempo(bpm \| null, ramp?)` / `setTempoOffset(delta, ramp?)` | absolute override / offset from each section's BPM |
+| `setChannel(id, { mute?, volume? }, fade?, at?)` / `resetChannels()` | per-channel mix, kept across track changes; `at` lands it on an exact audio time |
+| `setFilter(hz \| null, ramp?)` / `setVolume(v, ramp?)` | master low-pass / volume |
+| `on(type, fn, { ahead? })` | `beat` `bar` `section` `track` `loop` `stop`; `ahead: true` fires ~120 ms early with the exact audio `time` |
+| `state`, `bpm`, `currentChord()`, `nextStepTime()`, `beatPhase()` | what's audible now; chord for musical SFX; next 16th for quantizing |
 
-Song format: chords one per bar, melody as `NOTE-LENGTH` tokens in 16ths with `|` between bars, 16-char bass/drum/stab rows (see the header of `engine.ts`). Bars that don't add up to 16 steps throw at startup.
-`node music-test.mjs` (with `npm run serve`) checks cues, crossfades, tempo, channels, pause and events; `node music-preview.mjs` writes one full loop per track to music_preview/.
+Song format: chords one per bar, melody as `NOTE-LENGTH` tokens in 16ths with `|` between bars, 16-char bass/drum/stab rows, optional per-section `bpm`, `lead` patch, `arpRate`, `harmony` ("third"/"sixth", auto PSG line) and `crashEvery` (see `engine.ts`). Bars that don't add up to 16 steps throw at startup.
+`node music-test.mjs` (with `npm run serve`) checks sections, tiers, boss bump, freeze, build, key change, stingers, spectate and victory; `node music-preview.mjs` writes `music_preview/0_ascent_demo.wav` (layers + stingers walk) and one full pass per track.
 
 ## Networking
 `src/net.ts` defines `Transport` + `NetEvent` (lobbyJoin/Leave/Countdown, matchStart, attack, state, hit, ko, matchEnd, disconnected).
