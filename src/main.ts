@@ -1,6 +1,7 @@
 import { drawText, textWidth } from "./font";
 import { Audio, renderMusicPreview, TRACKS } from "./audio";
 import { DUEL_HP } from "./sim";
+import { FINAL_BOSSES, FINAL_HP, FBState, FB_TUNE, newFBState, stepFinal, finalSprite } from "./finalboss";
 import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
 import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport, Snap } from "./net";
 import { PILOT_NAMES, PILOT_BIOS, PILOT_COUNT, RANDOM_PILOT, loadPilotChoice, savePilotChoice, resolvePilot, pilotForName, validPilot, drawPilot } from "./pilots";
@@ -54,7 +55,12 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const ri = (a: number, b: number) => Math.floor(rnd(a, b + 1));
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** Power-up type weights for the 6% per-kill drop (must sum to 100). */
-const POWERUP_WEIGHTS: [string, number][] = [["W", 28], ["B", 18], ["S", 18], ["F", 18], ["L", 18]];
+const POWERUP_WEIGHTS: [string, number][] = [["W", 28], ["B", 18], ["G", 18], ["F", 18], ["S", 18]]; // G shield (guard), S special
+/** Special power-up (S): the weapon depends on the pilot flown. 0 LIGHTNING, 1 INFERNO, 2 STORM BLADES. */
+const SPECIALS = [{ name: "LIGHTNING", hud: "ZAP", col: "#3cf0ff" }, { name: "INFERNO", hud: "FIRE", col: "#ff9030" }, { name: "STORM BLADES", hud: "BLADE", col: "#ffffff" }];
+//                    KAGE VOSS SABLE IRONCLAD HEX ZORUK WRAITH FANG MARISOL BRICK TALON VESPER JINX CINDER
+export const PILOT_SPECIAL = [2, 0, 2, 0, 0, 1, 0, 2, 0, 1, 2, 2, 1, 1];
+const SPECIAL_SECS = 5;
 function pickPowerup() { let r = Math.random() * 100; for (const [k, w] of POWERUP_WEIGHTS) { if ((r -= w) < 0) return k; } return "W"; }
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 
@@ -121,7 +127,7 @@ const kn = (a: Act) => actName("key", a), pn = (a: Act) => actName("pad", a);
 // ---------- types ----------
 interface Rival { id: number; name: string; isBot: boolean; avatar: number; alive: boolean; hp: number; badges: number; skill: number; target: number; retarget: number; sendCd: number;
   flash: number; place: number; regen: number; seed: number; col: number; koT: number; ai: number; koBy: number; }
-interface Enemy { x: number; y: number; t: number; delay: number; path: number; x0: number; y0: number; idx: number; hp: number; col: number; form: number;
+interface Enemy { fb?: FBState; fp?: number; x: number; y: number; t: number; delay: number; path: number; x0: number; y0: number; idx: number; hp: number; col: number; form: number;
   fireCd: number; spr: number; up?: number; hf?: number; entered: boolean; dead: boolean; boss?: boolean; maxhp?: number; sender?: number; vx?: number;
   uid?: number; bv?: number; hist?: { x: number; y: number }[]; segs?: { x: number; y: number }[]; tur?: number[]; turMax?: number; cyc?: number; vis?: number; eye?: boolean; tx?: number; ty?: number; }
 interface Formation { id: number; total: number; killed: number; lost: boolean; sent: boolean; sender: number; done: boolean; }
@@ -134,7 +140,7 @@ interface Warn { variant?: number; t: number; tier: number; power: number; sende
 interface Wave { t: number; dur: number; power: number; acc: number; pat: number; }
 
 type State = "title" | "name" | "pilot" | "lobby" | "play" | "over" | "win" | "controls";
-const SNAP_COLS = [SENT_COL, MAG, YEL, CYA, WHT, "#60ff80"], SNAP_ITEMS = ["dot", "W", "B", "S", "F", "L", "badge", "star"];
+const SNAP_COLS = [SENT_COL, MAG, YEL, CYA, WHT, "#60ff80"], SNAP_ITEMS = ["dot", "W", "B", "G", "F", "S", "badge", "star"];
 
 class Game {
   state: State = "title"; time = 0; realT = 0;
@@ -146,12 +152,18 @@ class Game {
   chain = 0; chainCol = -1; chainT = 0; chainMax = 2.6; eligible = false; freeze = 0; chainPulse = 0; grazes = 0; bestChain = 0;
   formCd = 2; formId = 0; shake = 0; hitstop = 0; slow = 0; flash = 0; flashCol = WHT; duel = false; dead = false; endT = 0; paused = false;
   lowWarn = 0; tripleQ: number[] = []; bombCol = MAG; bombAt: { x: number; y: number } | null = null; zapT = 0; zapCd = 0; bolts: { pts: { x: number; y: number }[]; life: number }[] = []; bombFx = 0; titleT = 0;
+  specKind = 0; specKills = 0; inSpecial = false; ringA = 0; ringCd = 0;
+  flames: { x: number; y: number; vx: number; vy: number; life: number }[] = []; blasts: { x: number; y: number; life: number }[] = [];
+  blades: { x: number; y: number; vx: number; vy: number; life: number; pierce: number; hits: Enemy[]; a: number }[] = [];
+  finalQ: { t: number; pilot: number; sender: number; again: boolean } | null = null;
+  /** Test/benchmark hook: drives the ship instead of the input devices. */
+  bot: ((g: Game) => { dx: number; dy: number; fire: boolean; focus: boolean }) | null = null;
   constructor() { for (let i = 0; i < 90; i++) this.bgStars.push({ x: Math.random() * PW, y: Math.random() * PH, z: rnd(0.2, 1) }); }
 
   reset(players: PlayerInfo[]) {
     Object.assign(this, { time: 0, enemies: [], forms: [], pb: [], eb: [], items: [], parts: [], uiParts: [], projs: [], popups: [], warns: [], waves: [], streaks: [],
       px: PW / 2, py: PH - 40, hp: 3, inv: 2, regen: 20, weapon: 0, shield: false, bombs: 3, dots: 0, score: 0, badges: 0, starBoost: 0, kos: 0, myKos: 0, myKoBy: -2, lbScroll: 0, lbRep: 0, place: 0,
-      zapT: 0, zapCd: 0, bolts: [], tripleQ: [], bombAt: null, chain: 0, chainCol: -1, chainT: 0, eligible: false, freeze: 0, grazes: 0, bestChain: 0, formCd: 2, shake: 0, hitstop: 0, slow: 0, duel: false, dead: false, randTarget: -1, randCd: 0, endT: 0, bombFx: 0 });
+      zapT: 0, zapCd: 0, bolts: [], flames: [], blasts: [], blades: [], finalQ: null, specKills: 0, tripleQ: [], bombAt: null, chain: 0, chainCol: -1, chainT: 0, eligible: false, freeze: 0, grazes: 0, bestChain: 0, formCd: 2, shake: 0, hitstop: 0, slow: 0, duel: false, dead: false, randTarget: -1, randCd: 0, endT: 0, bombFx: 0 });
     this.rivals = [];
     for (let i = 0; i < 100; i++) { const pl = players[i] || { id: i, name: "BOT", isBot: true };
       this.rivals.push({ id: i, name: pl.name, isBot: pl.isBot, avatar: validPilot(pl.avatar) ?? pilotForName(pl.name), alive: true, hp: 3, badges: 0, skill: 0, target: -2, retarget: 0, sendCd: 0, flash: 0, place: 0, regen: 0, seed: Math.random() * 100, col: Math.floor(Math.random() * 4), koT: 0, ai: 0, koBy: -2 }); }
@@ -166,7 +178,7 @@ class Game {
   setNet(t: Transport) { this.net = t; t.on(e => { if (this.net === t) this.onNet(e); }); } lobbyLog: string[] = []; lobbyCount = 0; lobbyCd = -1; lastAttacker = -2; lobbyHumans = 0; lobbyVoted = false;
   bindNet() { this.setNet(this.net); }
   // ---------- pilot name entry (keyboard typing + controller letter picker) ----------
-  bgW = [1, 0, 0, 0, 0]; ripples: { x: number; y: number; t: number; gold: boolean }[] = []; cutIn: { t: number; name: string } | null = null; warpT = 0;
+  bgW = [1, 0, 0, 0, 0]; ripples: { x: number; y: number; t: number; gold: boolean }[] = []; cutIn: { t: number; name: string; title?: string; sub?: string; boss?: number; dur?: number } | null = null; warpT = 0;
   winStars: { x: number; y: number; sx: number; sy: number; at: number; col: string }[] = []; winT = 0; coreGrad: CanvasGradient | null = null;
   get vStage() { const r = this.remaining; return this.duel ? 4 : r > 75 ? 0 : r > 50 ? 1 : r > 25 ? 2 : r > 10 ? 3 : 4; }
   hue() { return STAGE_HUE[this.state === "play" || this.state === "over" || this.state === "win" ? this.vStage : 0]; }
@@ -409,12 +421,13 @@ class Game {
   }
 
   updatePlayer(dt: number) {
-    this.focus = actDown("focus");
-    const sp = this.focus ? 70 : 160; let dx = actVal("right") - actVal("left"), dy = actVal("down") - actVal("up"); // keys = 1, sticks analog
+    const bi = this.bot ? this.bot(this) : null;
+    this.focus = bi ? bi.focus : actDown("focus");
+    const sp = this.focus ? 70 : 160; let dx = bi ? bi.dx : actVal("right") - actVal("left"), dy = bi ? bi.dy : actVal("down") - actVal("up"); // keys = 1, sticks analog
     const mag = Math.hypot(dx, dy); if (mag > 1) { dx /= mag; dy /= mag; }
     this.px = clamp(this.px + dx * sp * dt, 6, PW - 6); this.py = clamp(this.py + dy * sp * dt, 10, PH - 8);
     this.inv -= dt; this.fireCd -= dt;
-    if (this.fireCd <= 0 && actDown("fire")) { // hold to fire
+    if (this.fireCd <= 0 && (bi ? bi.fire : actDown("fire"))) { // hold to fire
       this.fireCd = 0.075; const w = this.weapon;
       if (this.focus) { const n = 2 + w; for (let i = 0; i < n; i++) this.pb.push({ x: this.px + (i - (n - 1) / 2) * 3, y: this.py - 8, vx: 0, vy: -480, r: 2, col: YEL, dmg: 1.3 }); }
       else {
@@ -424,18 +437,79 @@ class Game {
       audio.shoot();
     }
     if (actHit("bomb")) this.bomb();
-    this.updateLightning(dt); this.updateTriple(dt);
+    this.updateSpecial(dt); this.updateTriple(dt);
     if (this.hp < 3) { this.regen -= dt; if (this.regen <= 0) { this.hp++; this.regen = 20; this.popup("+1 HP", this.px, this.py - 16, CYA, 1); audio.power(); } } else this.regen = 20;
     // engine particles
     if (Math.random() < 0.7) this.parts.push({ x: this.px + rnd(-1, 1), y: this.py + 7, vx: rnd(-10, 10), vy: rnd(60, 120), life: 0.2, max: 0.2, col: Math.random() < 0.5 ? CYA : WHT, s: 1 });
   }
 
-  /** Lightning power-up: auto chain-lightning to the nearest enemy, jumping to 2-3 more. Kills count toward chains. */
-  updateLightning(dt: number) {
+  /** Special power-up: one weapon per pilot (PILOT_SPECIAL), all run SPECIAL_SECS and kill at a similar rate (see special-test.mjs). */
+  updateSpecial(dt: number) {
     for (const b of this.bolts) b.life -= dt; this.bolts = this.bolts.filter(b => b.life > 0);
-    if (this.zapT <= 0 || this.dead) return;
-    this.zapT -= dt; this.zapCd -= dt; if (this.zapCd > 0) return; this.zapCd = 0.25;
-    const live = (e: Enemy) => !e.dead && (e.boss || (e.t >= e.delay && e.entered)) && e.x > 0 && e.x < PW && e.y > 0 && e.y < PH;
+    for (const b of this.blasts) b.life -= dt; this.blasts = this.blasts.filter(b => b.life > 0);
+    this.inSpecial = true;
+    this.updateFlames(dt); this.updateBlades(dt);
+    if (this.zapT > 0 && !this.dead) { this.zapT -= dt; this.zapCd -= dt;
+      if (this.specKind === 1) this.updateInferno(dt); else if (this.specKind === 2) this.updateStorm(); else this.updateLightning(); }
+    this.inSpecial = false;
+  }
+  liveTarget(e: Enemy) { return !e.dead && (e.boss || (e.t >= e.delay && e.entered)) && e.x > 0 && e.x < PW && e.y > 0 && e.y < PH; }
+  /** Special damage to any enemy (boss: its first weak part within reach, or none). */
+  specialHit(e: Enemy, dmg: number, x?: number, y?: number, reach = 0) {
+    if (e.dead) return;
+    if (e.boss) { const wp = this.bossParts(e).find(p => p.weak && (x === undefined || (Math.abs(p.x - x) < p.rx + reach && Math.abs(p.y - y!) < p.ry + reach))); if (wp) this.damageBoss(e, dmg, wp.tur); return; }
+    e.hp -= dmg; if (e.hp > 0 && e.up) this.chip(e); if (e.hp <= 0) this.killEnemy(e, true);
+  }
+  nearestLive(x: number, y: number, skip?: Enemy[]) { let best: Enemy | null = null, bd = 1e9; for (const e of this.enemies) { if (!this.liveTarget(e) || skip?.includes(e)) continue; const d = Math.hypot(e.x - x, e.y - y); if (d < bd) { bd = d; best = e; } } return best; }
+  /** INFERNO: a ring of three flames orbits the ship (burns what it touches) and napalm fireballs lob at the nearest enemy, bursting in an area. */
+  updateInferno(dt: number) {
+    this.ringA += dt * 6; this.ringCd -= dt;
+    if (this.ringCd <= 0) { this.ringCd = 0.15;
+      for (let k = 0; k < 3; k++) { const fx = this.px + Math.cos(this.ringA + k * 2.094) * 24, fy = this.py + Math.sin(this.ringA + k * 2.094) * 24;
+        for (const e of this.enemies) if (this.liveTarget(e) && (e.boss || Math.hypot(e.x - fx, e.y - fy) < 11)) this.specialHit(e, 2, fx, fy, 4); } }
+    if (Math.random() < 0.6) { const k = Math.floor(Math.random() * 3); this.parts.push({ x: this.px + Math.cos(this.ringA + k * 2.094) * 24, y: this.py + Math.sin(this.ringA + k * 2.094) * 24, vx: rnd(-15, 15), vy: rnd(-40, -10), life: 0.3, max: 0.3, col: Math.random() < 0.5 ? "#ff9030" : YEL, s: 1 }); }
+    if (this.zapCd > 0) return; this.zapCd = 0.16;
+    const tg = this.nearestLive(this.px, this.py); if (!tg) return;
+    const a = Math.atan2(tg.y - this.py, tg.x - this.px); this.flames.push({ x: this.px, y: this.py - 6, vx: Math.cos(a) * 250, vy: Math.sin(a) * 250, life: 1.1 }); audio.fireball();
+  }
+  updateFlames(dt: number) {
+    for (const f of this.flames) {
+      f.x += f.vx * dt; f.y += f.vy * dt; f.life -= dt;
+      if (Math.random() < 0.8) this.parts.push({ x: f.x + rnd(-1, 1), y: f.y + rnd(-1, 1), vx: rnd(-20, 20), vy: rnd(-20, 20), life: 0.25, max: 0.25, col: Math.random() < 0.4 ? YEL : "#ff5020", s: Math.random() < 0.4 ? 2 : 1 });
+      const hitE = this.enemies.some(e => this.liveTarget(e) && (e.boss ? this.bossParts(e).some(p => p.weak && Math.abs(p.x - f.x) < p.rx && Math.abs(p.y - f.y) < p.ry) : Math.hypot(e.x - f.x, e.y - f.y) < 8));
+      if (hitE || f.life <= 0 || f.y < -10) { f.life = -1; if (f.y < -10) continue;
+        this.inSpecial = true; for (const e of this.enemies) if (this.liveTarget(e) && (e.boss || Math.hypot(e.x - f.x, e.y - f.y) < 32)) this.specialHit(e, 2, f.x, f.y, 6);
+        this.blasts.push({ x: f.x, y: f.y, life: 0.25 }); this.burst(f.x, f.y, "#ff9030", 12, 90); this.burst(f.x, f.y, YEL, 6, 50); audio.napalm(); }
+    }
+    this.flames = this.flames.filter(f => f.life > 0);
+  }
+  /** STORM BLADES: homing shuriken thrown in a fan; each pierces up to three enemies. */
+  updateStorm() {
+    if (this.zapCd > 0) return; this.zapCd = 0.23;
+    const a = -Math.PI / 2 + rnd(-0.9, 0.9); this.blades.push({ x: this.px, y: this.py - 6, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, life: 1.4, pierce: 2, hits: [], a: 0 }); audio.blade();
+  }
+  updateBlades(dt: number) {
+    for (const b of this.blades) {
+      b.life -= dt; b.a += dt * 20;
+      const tg = this.nearestLive(b.x, b.y, b.hits);
+      if (tg) { const want = Math.atan2(tg.y - b.y, tg.x - b.x), cur = Math.atan2(b.vy, b.vx); let d = want - cur; while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283;
+        const na = cur + clamp(d, -9 * dt, 9 * dt); b.vx = Math.cos(na) * 320; b.vy = Math.sin(na) * 320; }
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      if (Math.random() < 0.5) this.parts.push({ x: b.x, y: b.y, vx: 0, vy: 0, life: 0.12, max: 0.12, col: Math.random() < 0.5 ? WHT : MAG, s: 1 });
+      for (const e of this.enemies) {
+        if (!this.liveTarget(e) || b.hits.includes(e)) continue;
+        const near = e.boss ? this.bossParts(e).some(p => Math.abs(p.x - b.x) < p.rx && Math.abs(p.y - b.y) < p.ry) : Math.hypot(e.x - b.x, e.y - b.y) < 8;
+        if (!near) continue;
+        this.inSpecial = true; this.specialHit(e, 2, b.x, b.y, 2); b.hits.push(e); audio.bladeHit(); for (let k = 0; k < 3; k++) this.parts.push({ x: b.x, y: b.y, vx: rnd(-60, 60), vy: rnd(-60, 60), life: 0.18, max: 0.18, col: WHT, s: 1 });
+        if (--b.pierce < 0) { b.life = 0; break; }
+      }
+    }
+    this.blades = this.blades.filter(b => b.life > 0 && b.x > -20 && b.x < PW + 20 && b.y > -20 && b.y < PH + 20);
+  }
+  /** LIGHTNING: auto chain-lightning to the nearest enemy, jumping to 2 more. Kills count toward chains. */
+  updateLightning() {
+    if (this.zapCd > 0) return; this.zapCd = 0.25;
+    const live = (e: Enemy) => this.liveTarget(e);
     const pool = this.enemies.filter(live); if (!pool.length) return;
     let from = { x: this.px, y: this.py - 6 }; const hitSet = new Set<Enemy>(); const jumps = 3; // first target + 2 jumps
     for (let j = 0; j < jumps; j++) {
@@ -446,8 +520,7 @@ class Game {
       for (let k = 1; k < n; k++) { const f = k / n; pts.push({ x: from.x + (best.x - from.x) * f + rnd(-5, 5), y: from.y + (best.y - from.y) * f + rnd(-5, 5) }); }
       pts.push({ x: best.x, y: best.y }); this.bolts.push({ pts, life: 0.12 });
       for (let k = 0; k < 4; k++) this.parts.push({ x: best.x, y: best.y, vx: rnd(-70, 70), vy: rnd(-70, 70), life: 0.2, max: 0.2, col: Math.random() < 0.5 ? CYA : WHT, s: 1 });
-      if (best.boss) { const wp = this.bossParts(best).find(p => p.weak); if (wp) this.damageBoss(best, 2, wp.tur); }
-      else { best.hp -= 2; if (best.hp > 0 && best.up) this.chip(best); if (best.hp <= 0) this.killEnemy(best, true); }
+      this.specialHit(best, 2);
       from = { x: best.x, y: best.y };
     }
     audio.zap();
@@ -568,9 +641,22 @@ class Game {
     this.popup(["HIT ANYWHERE", "ONLY THE HEAD IS WEAK", "DESTROY TURRETS, THEN CORE", "HIT IT WHEN THE EYE OPENS"][v], PW / 2, 46, "#ff9090", 1);
     return e;
   }
+  /** Final duel boss: the OPPONENT's pilot boss (FINAL_BOSSES[pilot]); bv = 100 + pilot. Never escapes; returns after a pause when beaten. */
+  spawnFinal(pilot: number, sender: number, again = false) {
+    pilot = ((pilot | 0) % FINAL_BOSSES.length + FINAL_BOSSES.length) % FINAL_BOSSES.length;
+    const d = FINAL_BOSSES[pilot], hp = Math.round(FINAL_HP * d.hp);
+    const e: Enemy = { x: PW / 2, y: -24, t: 0, delay: 0, path: 0, x0: 0, y0: 0, idx: 0, hp, maxhp: hp, col: SENT, form: -1, fireCd: 1.2, spr: 0, entered: true, dead: false, boss: true, sender, bv: 100 + pilot,
+      fb: newFBState(), fp: pilot, vis: 1, eye: true };
+    this.enemies.push(e); audio.finalBoss(); this.shake = Math.max(this.shake, 6); this.flash = 0.25; this.flashCol = d.pal[2];
+    this.popup(d.name + (again ? " RETURNS!" : "!"), PW / 2, 34, d.pal[2], 2);
+    this.cutIn = { t: 0, name: d.name, title: again ? "FINAL BOSS RETURNS" : "FINAL BOSS", sub: "SUMMONED BY " + (this.rivals[sender]?.name || "?"), boss: pilot, dur: 1.8 };
+    return e;
+  }
+  bossName(e: Enemy) { return (e.bv ?? 0) >= 100 ? FINAL_BOSSES[(e.bv ?? 100) - 100]?.name ?? "BOSS" : BOSS_NAMES[e.bv ?? 0]; }
   /** Hit regions: weak = takes damage, block = absorbs shots. */
   bossParts(e: Enemy) {
     const P: { x: number; y: number; rx: number; ry: number; weak: boolean; tur?: number }[] = [];
+    if ((e.bv ?? 0) >= 100) { const d = FINAL_BOSSES[e.bv! - 100]; if (d && (e.vis ?? 1) > 0.5) P.push({ x: e.x, y: e.y + (d.hit.dy ?? 0), rx: d.hit.rx, ry: d.hit.ry, weak: e.fb ? (d.weak ? d.weak(e.fb) : true) : !!e.eye }); return P; }
     switch (e.bv) {
       case 1: P.push({ x: e.x, y: e.y, rx: 6, ry: 5, weak: true }); for (const g of e.segs!) P.push({ x: g.x, y: g.y, rx: 4, ry: 4, weak: false }); break;
       case 2: { const tur = e.tur!; [-20, 20].forEach((dx, i) => { if (tur[i] > 0) P.push({ x: e.x + dx, y: e.y + 6, rx: 5, ry: 5, weak: true, tur: i }); });
@@ -596,6 +682,11 @@ class Game {
   updateBoss(e: Enemy, dt: number) {
     e.t += dt; const t = e.t, bs = 60 + this.ramp * 15, aim = (x: number, y: number) => Math.atan2(this.py - y, this.px - x);
     e.fireCd -= dt;
+    if (e.fb && e.fp !== undefined) { // final boss (see finalboss.ts)
+      const d = FINAL_BOSSES[e.fp], pos = stepFinal(d, e.fp, e.fb, this, dt, e.hp / (e.maxhp || 1)); e.x = pos.x; e.y = pos.y; e.vis = e.fb.vis; e.eye = d.weak ? d.weak(e.fb) : true;
+      for (const p of this.bossParts(e)) if (this.collidePlayer(p.x, p.y, Math.min(p.rx, p.ry) * 0.7)) { this.hurt(); break; }
+      return;
+    }
     if (e.bv === 1) { // SERPENT: weaving head, armored body trail
       e.x = PW / 2 + Math.sin(t * 1.1) * PW * 0.38; e.y = Math.min(55 + Math.sin(t * 0.8) * 40, -20 + t * 60);
       e.hist!.push({ x: e.x, y: e.y }); if (e.hist!.length > 80) e.hist!.shift();
@@ -635,7 +726,7 @@ class Game {
         else { e.fireCd = 0.6; const a = aim(e.x, e.y); for (let i = -2; i <= 2; i++) this.fireAt(e.x, e.y, a + i * 0.18, bs * 1.3, MAG); }
       }
     }
-    if (t > 40) { e.dead = true; this.popup(BOSS_NAMES[e.bv ?? 0] + " ESCAPED", PW / 2, 80, "#888888", 1); }
+    if (t > 40) { e.dead = true; this.popup(this.bossName(e) + " ESCAPED", PW / 2, 80, "#888888", 1); }
     for (const p of this.bossParts(e)) if (this.collidePlayer(p.x, p.y, Math.min(p.rx, p.ry))) { this.hurt(); break; }
   }
   collidePlayer(x: number, y: number, r: number) { const dx = x - this.px, dy = y - this.py; return dx * dx + dy * dy < (r + 1.5) * (r + 1.5); }
@@ -648,16 +739,18 @@ class Game {
     this.burst(e.x, e.y, col, e.boss ? 80 : 14, e.boss ? 160 : 90); this.burst(e.x, e.y, WHT, 4, 40);
     if (e.boss) {
       this.shake = 10; this.hitstop = 10; audio.explodeBig(); audio.musicEvent("bossDown"); this.flash = 0.3; this.flashCol = YEL; this.score += 20000;
-      this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3);
-      this.reflect(e.sender ?? -1, 1, 12);
+      if (e.fb) { this.popup("FINAL BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(e.sender ?? -1, 2, 30); this.score += 30000;
+        if (this.duel) this.finalQ = { t: 18, pilot: e.fp ?? 0, sender: e.sender ?? -1, again: true }; }
+      else { this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); this.reflect(e.sender ?? -1, 1, 12); }
       for (let i = 0; i < 12; i++) this.items.push({ x: e.x + rnd(-15, 15), y: e.y + rnd(-10, 10), vx: rnd(-30, 30), vy: rnd(-60, 0), kind: "dot", t: 0 });
-      this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pick(["W", "B", "S", "F", "L"]), t: 0 });
+      this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pick(["W", "B", "G", "F", "S"]), t: 0 });
       this.chainAdd(e.col, 5);
       return;
     }
     this.shake = Math.max(this.shake, 1.5);
     const f = this.forms.find(f => f.id === e.form);
     if (byShot) {
+      if (this.inSpecial) this.specKills++;
       this.chainAdd(e.col, 0);
       this.score += Math.round(100 * (1 + (e.up ?? 0)) * (1 + this.chain / 10));
       audio.kill(this.chain); audio.musicEvent("kill");
@@ -754,8 +847,10 @@ class Game {
       case "W": if (this.weapon < 3) { this.weapon++; this.popup("WEAPON UP!", this.px, this.py - 14, CYA, 1); } else { this.score += 5000; this.popup("MAX 5000", this.px, this.py - 14, CYA, 1); } audio.power(); break;
       case "B": if (this.bombs >= 5) { this.tripleBomb(); break; } this.bombs = Math.min(5, this.bombs + 1); this.popup("+BOMB", this.px, this.py - 14, MAG, 1); audio.power(); break;
       case "F": this.freeze = 5; this.popup("CHAIN FREEZE!", this.px, this.py - 14, CYA, 1); audio.power(); break;
-      case "L": this.zapT = 5; this.zapCd = 0; this.popup("LIGHTNING!", this.px, this.py - 16, "#c0f8ff", 2); audio.lightning(); this.flash = 0.1; this.flashCol = CYA; break;
-      case "S": this.shield = true; this.popup("SHIELD!", this.px, this.py - 14, CYA, 1); audio.power(); break;
+      case "S": { const k = this.specKind = PILOT_SPECIAL[this.pilot] ?? 0, sp = SPECIALS[k]; this.zapT = SPECIAL_SECS; this.zapCd = 0; this.ringCd = 0;
+        this.popup(sp.name + "!", this.px, this.py - 16, sp.col, 2); this.popup("SPECIAL WEAPON", this.px, this.py - 4, WHT, 1);
+        if (k === 1) audio.inferno(); else if (k === 2) audio.blades(); else audio.lightning(); this.flash = 0.1; this.flashCol = sp.col; break; }
+      case "G": this.shield = true; this.popup("SHIELD!", this.px, this.py - 14, CYA, 1); audio.power(); break;
       case "badge": this.badges++; this.popup("BADGE +10% ATK", this.px, this.py - 14, YEL, 1); audio.power(); this.burst(it.x, it.y, YEL, 12); break;
       case "star": this.starBoost += 6; this.popup("STARFALL! +6 POWER", this.px, this.py - 18, YEL, 1); audio.star(); this.flash = 0.12; this.flashCol = YEL; this.burst(it.x, it.y, YEL, 25, 120); break;
     }
@@ -778,7 +873,8 @@ class Game {
     for (const w of this.warns) {
       w.t -= dt;
       // cap simultaneous incoming mini-bosses: extra ones wait (warning keeps flashing) until one is down
-      if (w.t <= 0 && w.tier === 2 && this.enemies.filter(e => e.boss && !e.dead).length >= MAX_BOSSES) { w.t = 0.5; continue; }
+      const cap = this.enemies.some(e => e.fb && !e.dead) || this.finalQ ? 1 : MAX_BOSSES; // the final boss fights alone (mini-bosses wait for the gap)
+      if (w.t <= 0 && w.tier === 2 && this.enemies.filter(e => e.boss && !e.dead).length >= cap) { w.t = 0.5; continue; }
       if (w.t <= 0) {
         this.flash = 0.12; this.flashCol = SENT_COL; this.shake = Math.max(this.shake, 3);
         if (w.tier === 0) { this.spawnFormation(clamp(3 + Math.floor(w.power / 5), 3, 10), SENT, ri(0, 3), true, w.sender); }
@@ -788,6 +884,7 @@ class Game {
       }
     }
     this.warns = this.warns.filter(w => w.t > 0);
+    if (this.finalQ && !this.dead) { this.finalQ.t -= dt; if (this.finalQ.t <= 0) { const q = this.finalQ; this.finalQ = null; const op = this.rivals.find(r => r.alive); if (op && this.duel) this.spawnFinal(op.avatar, op.id, q.again); } }
   }
 
   // ---------- opponents (state arrives via this.net) ----------
@@ -798,7 +895,7 @@ class Game {
       if (this.time % 0.25 < dt) this.net.sendState(this.hp, this.badges, this.targets, this.eligible);
       if (this.watched) { this.snapT -= dt; if (this.snapT <= 0) { this.snapT = Math.max(0, this.snapT + 1 / 15); this.net.sendSnap(this.buildSnap()); } } // someone spectates us
     }
-    if (!this.duel && this.aliveAI === 1 && !this.dead) { this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.warpT = 1.4; this.flash = 0.4; this.flashCol = YEL; }
+    if (!this.duel && this.aliveAI === 1 && !this.dead) { const op = this.rivals.find(r => r.alive); if (op) this.finalQ = { t: 2.6, pilot: op.avatar, sender: op.id, again: false }; this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.warpT = 1.4; this.flash = 0.4; this.flashCol = YEL; }
     if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.buildWinStars(); this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.musicEvent("victory"); }
   }
   koRival(v: Rival, killer: number, place: number, badges: number) {
@@ -846,7 +943,7 @@ class Game {
     for (const p of this.popups) p.t += dt; this.popups = this.popups.filter(p => p.t < 1.3);
     for (let i = 0; i < 5; i++) this.bgW[i] += (BG_TARGET[this.vStage][i] - this.bgW[i]) * Math.min(1, dt * 0.6);
     for (const q of this.ripples) q.t += dt; this.ripples = this.ripples.filter(q => q.t < 1.2);
-    if (this.cutIn) { this.cutIn.t += dt; if (this.cutIn.t > 0.9) this.cutIn = null; }
+    if (this.cutIn) { this.cutIn.t += dt / (this.cutIn.dur ?? 0.9) * 0.9; if (this.cutIn.t > 0.9) this.cutIn = null; }
     this.warpT = Math.max(0, this.warpT - dt); this.winT += dt;
     this.shake = Math.max(0, this.shake - dt * 30); this.flash = Math.max(0, this.flash - dt); this.bombFx = Math.max(0, this.bombFx - dt);
     for (const s of this.bgStars) { s.y += s.z * 30 * dt * (this.state === "play" ? Math.sqrt(this.ramp) : 1); if (s.y > PH) { s.y = 0; s.x = Math.random() * PW; } }
@@ -881,7 +978,7 @@ class Game {
   buildSnap(): Snap {
     const R = Math.round, ci = (c: string) => Math.max(0, SNAP_COLS.indexOf(c));
     const p = [R(this.px), R(this.py), this.hp, this.bombs, this.chain, this.chainCol, this.eligible ? 1 : 0, R(clamp(this.chainT / this.chainMax, 0, 1) * 100), this.score, this.weapon,
-      this.shield ? 1 : 0, this.focus ? 1 : 0, this.inv > 0 ? 1 : 0, this.badges, this.mode, this.freeze > 0 ? 1 : 0, this.zapT > 0 ? 1 : 0, R(this.regen), this.starBoost, this.kos, R(this.bombFx * 100)];
+      this.shield ? 1 : 0, this.focus ? 1 : 0, this.inv > 0 ? 1 : 0, this.badges, this.mode, this.freeze > 0 ? 1 : 0, this.zapT > 0 ? 1 + this.specKind : 0, R(this.regen), this.starBoost, this.kos, R(this.bombFx * 100)];
     const e: number[][] = [];
     for (const q of this.enemies) {
       if (q.dead || (!q.boss && q.t < q.delay)) continue; if (!q.uid) q.uid = ++this.uidN;
@@ -925,7 +1022,7 @@ class Game {
     const pb: Bullet[] = []; for (let j = 0; j + 4 < A.s.pb.length + 1; j += 5) { const b = A.s.pb; pb.push({ x: b[j] + b[j + 2] * dA, y: b[j + 1] + b[j + 3] * dA, vx: 0, vy: 0, r: 2, col: SNAP_COLS[b[j + 4]] ?? MAG }); }
     const items: Item[] = []; for (let j = 0; j + 2 < B.s.it.length; j += 3) items.push({ x: B.s.it[j], y: B.s.it[j + 1], vx: 0, vy: 0, kind: SNAP_ITEMS[B.s.it[j + 2]] ?? "dot", t: this.realT });
     return { viewing: true, dead: false, px: L(P[0], Q[0]), py: L(P[1], Q[1]), hp: Q[2], bombs: Q[3], chain: Q[4], chainCol: Q[5], eligible: !!Q[6], chainT: Q[7] / 100 * this.chainMax, score: Q[8],
-      weapon: Q[9], shield: !!Q[10], focus: !!Q[11], inv: Q[12] ? 0.5 : 0, badges: Q[13], mode: Q[14], freeze: Q[15] ? 1 : 0, zapT: Q[16] ? 1 : 0, regen: Q[17], starBoost: Q[18], kos: Q[19], bombFx: (Q[20] || 0) / 100,
+      weapon: Q[9], shield: !!Q[10], focus: !!Q[11], inv: Q[12] ? 0.5 : 0, badges: Q[13], mode: Q[14], freeze: Q[15] ? 1 : 0, zapT: Q[16] ? 1 : 0, specKind: Math.max(0, (Q[16] || 1) - 1), flames: [], blasts: [], blades: [], regen: Q[17], starBoost: Q[18], kos: Q[19], bombFx: (Q[20] || 0) / 100,
       enemies, eb, pb, items, targets: B.s.tg.filter(t => t >= 0 && t < 100), parts: this.specParts, popups: [], bolts: [], warns: [], waves: [], tripleQ: [], bombAt: null, bombCol: MAG, chainPulse: 0, cutIn: null, flash: 0 };
   }
   renderSpecBanner() {
@@ -1062,8 +1159,11 @@ class Game {
     for (let i = 0; i < 6; i++) { const lx = ((i * 53 + t * 900) % (PW + 40)) - 20; ctx.fillStyle = i % 2 ? "rgba(255,48,208,0.35)" : "rgba(255,230,80,0.3)"; ctx.fillRect(Math.round(lx), 4 + (i * 7) % (bh - 8), 18, 1); }
     ctx.fillStyle = YEL; ctx.fillRect(0, bh - 1, PW, 1); ctx.fillStyle = MAG; ctx.fillRect(0, bh - 2, PW, 1);
     ctx.fillStyle = "#000"; ctx.fillRect(2, 1, 22, 22); ctx.drawImage(pilotSpr, 3, 2, 20, 20); ctx.strokeStyle = YEL; ctx.strokeRect(2.5, 1.5, 21, 21);
-    drawText(ctx, "MINI-BOSS SENT!", 30, 4, YEL, 1); drawText(ctx, "INCOMING FOR " + c.name, 30, 14, WHT, 1);
-    ctx.drawImage(bossSpr, PW - 46, 2, 42, 20);
+    if (c.boss !== undefined) { const sp = finalSprite(c.boss), col = FINAL_BOSSES[c.boss].pal[2], k = Math.min(1, 20 / sp.height);
+      drawText(ctx, c.title + ": " + c.name, 30, 4, Math.floor(t * 20) % 2 ? WHT : col, 1); drawText(ctx, c.sub ?? "", 30, 14, WHT, 1);
+      ctx.drawImage(sp, PW - 6 - Math.round(sp.width * k), 2, Math.round(sp.width * k), Math.round(sp.height * k)); }
+    else { drawText(ctx, "MINI-BOSS SENT!", 30, 4, YEL, 1); drawText(ctx, "INCOMING FOR " + c.name, 30, 14, WHT, 1);
+      ctx.drawImage(bossSpr, PW - 46, 2, 42, 20); }
     ctx.restore();
   }
   buildWinStars() {
@@ -1227,7 +1327,7 @@ class Game {
     for (let i = 0; i < 3; i++) { const on = i < this.hp; ctx.fillStyle = on ? (this.hp === 1 && Math.floor(this.realT * 6) % 2 ? "#ff2040" : MAG) : DIM; ctx.fillRect(x0 + 5 + i * 13, y + 5, 10, 8); if (on) { ctx.fillStyle = WHT; ctx.fillRect(x0 + 6 + i * 13, y + 6, 3, 2); } }
     if (this.hp < 3) { ctx.fillStyle = DIM; ctx.fillRect(x0 + 5, y + 16, 36, 2); ctx.fillStyle = CYA; ctx.fillRect(x0 + 5, y + 16, Math.round(36 * (1 - this.regen / 20)), 2); }
     if (this.shield) { ctx.strokeStyle = CYA; ctx.strokeRect(x0 + 3.5, y + 3.5, 41, 12); }
-    if (this.zapT > 0) { drawText(ctx, "ZAP", x0 + 5, y + 20, Math.floor(this.realT * 10) % 2 ? WHT : CYA, 1); ctx.fillStyle = DIM; ctx.fillRect(x0 + 19, y + 21, 24, 3); ctx.fillStyle = CYA; ctx.fillRect(x0 + 19, y + 21, Math.round(24 * this.zapT / 5), 3); }
+    if (this.zapT > 0) { const SP = SPECIALS[this.specKind] ?? SPECIALS[0]; drawText(ctx, SP.hud, x0 + 5, y + 20, Math.floor(this.realT * 10) % 2 ? WHT : SP.col, 1); const bx = x0 + 7 + SP.hud.length * 6, bw = Math.max(8, 43 - SP.hud.length * 6); ctx.fillStyle = DIM; ctx.fillRect(bx, y + 21, bw, 3); ctx.fillStyle = SP.col; ctx.fillRect(bx, y + 21, Math.round(bw * Math.min(1, this.zapT / SPECIAL_SECS)), 3); }
     const cx = x0 + 50; const cc = this.chainCol >= 0 ? COLORS[this.chainCol] : WHT;
     if (this.chain > 0) {
       const sc = 2 + (this.chainPulse > 0.5 ? 1 : 0);
@@ -1282,6 +1382,7 @@ class Game {
   drawBoss(e: Enemy) {
     const fl = e.hp < (e.maxhp || 1) * 0.3 && Math.floor(this.realT * 10) % 2, X = Math.round(e.x), Y = Math.round(e.y);
     const flashOver = (x: number, y: number, w: number, h: number) => { if (fl) { ctx.globalAlpha = 0.4; ctx.fillStyle = WHT; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; } };
+    if ((e.bv ?? 0) >= 100) { this.drawFinal(e, X, Y, !!fl); return; }
     if (e.bv === 1) {
       for (let i = e.segs!.length - 1; i >= 0; i--) { const g = e.segs![i]; ctx.drawImage(serpSegSpr, Math.round(g.x) - 3, Math.round(g.y) - 3); }
       ctx.drawImage(serpHeadSpr, X - 11, Y - 7, 22, 14); flashOver(X - 11, Y - 7, 22, 14);
@@ -1304,7 +1405,21 @@ class Game {
     } else { ctx.drawImage(bossSpr, X - 21, Y - 10, 42, 20); flashOver(X - 21, Y - 10, 42, 20); }
     const sh = e.bv === 2 && e.tur!.some(h => h > 0);
     ctx.fillStyle = DIM; ctx.fillRect(10, 4, PW - 20, 3); ctx.fillStyle = sh ? CYA : SENT_COL; ctx.fillRect(10, 4, Math.round((PW - 20) * Math.max(0, e.hp) / (e.maxhp || 1)), 3);
-    drawText(ctx, BOSS_NAMES[e.bv ?? 0] + (sh ? " (SHIELDED)" : "") + " FROM " + (this.rivals[e.sender ?? -1]?.name || "?"), PW / 2, 10, SENT_COL, 1, "center");
+    drawText(ctx, this.bossName(e) + (sh ? " (SHIELDED)" : "") + " FROM " + (this.rivals[e.sender ?? -1]?.name || "?"), PW / 2, 10, SENT_COL, 1, "center");
+  }
+  drawFinal(e: Enemy, X: number, Y: number, fl: boolean) {
+    const i = (e.bv ?? 100) - 100, d = FINAL_BOSSES[i]; if (!d) return; const sp = finalSprite(i), col = d.pal[2], S = e.fb;
+    if (S) { for (const l of S.tele) { const a = l.life / l.max, on = Math.floor(this.realT * 16) % 2; ctx.globalAlpha = 0.35 + 0.5 * (1 - a); ctx.strokeStyle = on ? l.col : WHT;
+        ctx.beginPath(); if (l.ring) ctx.arc(l.x1, l.y1, l.ring * (0.4 + 0.6 * a), 0, 6.283); else { ctx.moveTo(l.x1 + 0.5, l.y1 + 0.5); ctx.lineTo(l.x2 + 0.5, l.y2 + 0.5); } ctx.stroke(); }
+      for (const c of S.clones) { ctx.globalAlpha = Math.min(0.55, c.life / 1.6); ctx.drawImage(sp, Math.round(c.x - sp.width / 2) + (Math.floor(this.realT * 30) % 2), Math.round(c.y - sp.height / 2)); } ctx.globalAlpha = 1; }
+    const v = e.vis ?? 1; if (v < 1 && Math.floor(this.realT * 20) % 2) { ctx.globalAlpha = 0.6; ctx.drawImage(sp, X - (sp.width >> 1) + ri(-3, 3), Y - (sp.height >> 1)); }
+    ctx.globalAlpha = v; ctx.drawImage(sp, X - (sp.width >> 1), Y - (sp.height >> 1));
+    if (d.weak) { ctx.fillStyle = e.eye ? YEL : "#402060"; ctx.fillRect(X - 4, Y - 2, 9, e.eye ? 5 : 1); if (e.eye) { ctx.fillStyle = "#000"; ctx.fillRect(X - 1 + clamp(Math.round((this.px - e.x) / 40), -2, 2), Y - 1, 3, 3); } }
+    else if (Math.floor(this.realT * 6) % 2) { ctx.fillStyle = WHT; ctx.fillRect(X - 1, Y + (d.hit.dy ?? 0) - 1, 2, 2); }
+    ctx.globalAlpha = 1;
+    if (fl) { ctx.globalAlpha = 0.35; ctx.fillStyle = WHT; ctx.fillRect(X - (sp.width >> 1), Y - (sp.height >> 1), sp.width, sp.height); ctx.globalAlpha = 1; }
+    ctx.fillStyle = DIM; ctx.fillRect(10, 4, PW - 20, 3); ctx.fillStyle = col; ctx.fillRect(10, 4, Math.round((PW - 20) * Math.max(0, e.hp) / (e.maxhp || 1)), 3);
+    drawText(ctx, "FINAL BOSS " + d.name + (d.weak && !e.eye ? " (SEALED)" : ""), PW / 2, 10, col, 1, "center");
   }
   renderField() {
     ctx.save(); ctx.translate(PX, PY);
@@ -1340,7 +1455,7 @@ class Game {
       if (it.kind === "dot") { ctx.fillStyle = Math.floor(it.t * 8) % 2 ? YEL : WHT; ctx.fillRect(x - 1, y - 1, 2, 2); }
       else if (it.kind === "badge") ctx.drawImage(badgeSpr, x - 3, y - 3);
       else if (it.kind === "star") { ctx.fillStyle = YEL; ctx.fillRect(x - 3, y - 1, 7, 3); ctx.fillRect(x - 1, y - 3, 3, 7); ctx.fillStyle = WHT; ctx.fillRect(x - 1, y - 1, 3, 3); if (Math.floor(it.t * 6) % 2) drawText(ctx, "CATCH!", x, y - 12, YEL, 1, "center"); }
-      else { const c = { W: CYA, B: MAG, F: "#a0e0ff", S: "#60ff80", L: Math.floor(this.realT * 10) % 2 ? WHT : CYA }[it.kind] || WHT; ctx.fillStyle = "#000"; ctx.fillRect(x - 5, y - 5, 11, 11); ctx.strokeStyle = c; ctx.strokeRect(x - 4.5, y - 4.5, 10, 10); drawText(ctx, it.kind, x - 1, y - 2, c, 1); }
+      else { const c = { W: CYA, B: MAG, F: "#a0e0ff", G: "#60ff80", S: Math.floor(this.realT * 10) % 2 ? WHT : SPECIALS[PILOT_SPECIAL[this.pilot] ?? 0].col }[it.kind] || WHT; ctx.fillStyle = "#000"; ctx.fillRect(x - 5, y - 5, 11, 11); ctx.strokeStyle = c; ctx.strokeRect(x - 4.5, y - 4.5, 10, 10); drawText(ctx, it.kind, x - 1, y - 2, c, 1); }
     }
     // enemies
     for (const e of this.enemies) {
@@ -1354,6 +1469,14 @@ class Game {
     for (const b of this.bolts) { // jagged neon lightning
       for (let i = 0; i < b.pts.length - 1; i++) { const p0 = b.pts[i], p1 = b.pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(p1.x - p0.x, p1.y - p0.y)));
         for (let k = 0; k <= n; k++) { const x = Math.round(p0.x + (p1.x - p0.x) * k / n), y = Math.round(p0.y + (p1.y - p0.y) * k / n); ctx.fillStyle = CYA; ctx.fillRect(x - 1, y, 3, 1); ctx.fillStyle = WHT; ctx.fillRect(x, y, 1, 1); } } }
+    for (const b of this.blasts) { const k = 1 - b.life / 0.25; ctx.strokeStyle = k < 0.5 ? YEL : "#ff5020"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b.x, b.y, 6 + k * 22, 0, 6.283); ctx.stroke(); ctx.lineWidth = 1; }
+    for (const f of this.flames) { const x = Math.round(f.x), y = Math.round(f.y), fl = Math.floor(this.realT * 20) % 2; ctx.fillStyle = "#ff5020"; ctx.fillRect(x - 3, y - 3, 7, 7); ctx.fillStyle = fl ? YEL : "#ff9030"; ctx.fillRect(x - 2, y - 2, 5, 5); ctx.fillStyle = WHT; ctx.fillRect(x - 1, y - 1, 2, 2); }
+    if (this.zapT > 0 && this.specKind === 1 && !this.dead) for (let k = 0; k < 3; k++) { const a = this.ringA + k * 2.094, x = Math.round(this.px + Math.cos(a) * 24), y = Math.round(this.py + Math.sin(a) * 24);
+      for (let j = 1; j < 4; j++) { const aa = a - j * 0.18; ctx.globalAlpha = 1 - j * 0.25; ctx.fillStyle = "#ff5020"; ctx.fillRect(Math.round(this.px + Math.cos(aa) * 24) - 1, Math.round(this.py + Math.sin(aa) * 24) - 1, 3, 3); } ctx.globalAlpha = 1;
+      ctx.fillStyle = "#ff9030"; ctx.fillRect(x - 3, y - 3, 6, 6); ctx.fillStyle = YEL; ctx.fillRect(x - 2, y - 2, 4, 4); ctx.fillStyle = WHT; ctx.fillRect(x - 1, y - 1, 2, 2); }
+    for (const b of this.blades) { const x = Math.round(b.x), y = Math.round(b.y), r = Math.floor(b.a) % 2;
+      ctx.fillStyle = MAG; if (r) { ctx.fillRect(x - 4, y, 9, 1); ctx.fillRect(x, y - 4, 1, 9); } else { for (let k = -3; k <= 3; k++) { ctx.fillRect(x + k, y + k, 1, 1); ctx.fillRect(x + k, y - k, 1, 1); } }
+      ctx.fillStyle = WHT; ctx.fillRect(x - 1, y - 1, 3, 3); ctx.fillStyle = "#000"; ctx.fillRect(x, y, 1, 1); }
     // player
     if (!this.dead) {
       if (this.inv <= 0 || Math.floor(this.realT * 15) % 2) ctx.drawImage(shipSpr, Math.round(this.px) - 5, Math.round(this.py) - 6);
@@ -1377,7 +1500,7 @@ class Game {
   }
 }
 
-const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = TRACKS.map(t => ({ id: t.id, name: t.title, bpm: t.bpm, sections: t.sections.map(s => ({ id: s.id, name: s.name, bpm: s.bpm, bars: s.chords.trim().split(/\s+/).length })) }));
+const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__fbTune = FB_TUNE; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = TRACKS.map(t => ({ id: t.id, name: t.title, bpm: t.bpm, sections: t.sections.map(s => ({ id: s.id, name: s.name, bpm: s.bpm, bars: s.chords.trim().split(/\s+/).length })) }));
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };

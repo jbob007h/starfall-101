@@ -87,6 +87,14 @@ export class Audio {
     const c = this.ctx; if (!c) return; const t = c.currentTime; const n = 2 + tier;
     for (let i = 0; i < n; i++) { this.tone(880, 0.11, "square", 0.13, 840, t + i * 0.24); this.tone(587, 0.11, "square", 0.13, 560, t + i * 0.24 + 0.12); }
   }
+  /** INFERNO: fireball launch (low whoosh) / napalm burst (crackling boom); STORM BLADES: metallic throw ting; pickups. */
+  fireball() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(0.14, 0.1, 500, t); this.tone(rnd(160, 220), 0.12, "sawtooth", 0.05, 70, t); }
+  napalm() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(0.22, 0.16, 250, t); for (let i = 0; i < 3; i++) this.noiseHit(0.03, 0.08, 2500, t + 0.04 + i * 0.05); }
+  blade() { const c = this.ctx; if (!c) return; const t = c.currentTime; const f = rnd(2600, 3400); this.tone(f, 0.05, "triangle", 0.05, f * 1.3, t); this.noiseHit(0.02, 0.05, 7000, t); }
+  bladeHit() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.tone(rnd(1800, 2400), 0.04, "square", 0.04, 900, t); }
+  inferno() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(0.6, 0.25, 150, t); [0, 3, 7, 12].forEach((s, i) => this.tone(220 * Math.pow(2, s / 12), 0.14, "sawtooth", 0.08, 0, t + i * 0.05)); }
+  blades() { const c = this.ctx; if (!c) return; const t = c.currentTime; for (let i = 0; i < 5; i++) this.tone(2400 + i * 300, 0.06, "triangle", 0.07, 3600, t + i * 0.04); this.noiseHit(0.1, 0.1, 6000, t); }
+  finalBoss() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(1.2, 0.35, 80, t); [0, -5, -12].forEach((s, i) => this.tone(110 * Math.pow(2, s / 12), 0.5, "sawtooth", 0.18, 0, t + i * 0.22)); }
   zap() { const c = this.ctx; if (!c) return; const t = c.currentTime; this.noiseHit(0.08, 0.18, 3500, t); this.tone(rnd(1400, 2200), 0.07, "sawtooth", 0.06, 300, t); this.noiseHit(0.03, 0.12, 6000, t + 0.04); }
   lightning() { const c = this.ctx; if (!c) return; const t = c.currentTime; for (let i = 0; i < 6; i++) this.noiseHit(0.04, 0.2, 4000, t + i * 0.05); [0, 7, 12, 19].forEach((s, i) => this.tone(880 * Math.pow(2, s / 12), 0.1, "square", 0.08, 0, t + 0.3 + i * 0.05)); }
   tripleBomb() { const c = this.ctx; if (!c) return; const t = c.currentTime;

@@ -77,7 +77,7 @@ await p.screenshot({ path: "screenshot7.png" });
 // --- lightning + INCOMING / SENT labels
 await p.evaluate(() => { const g = window.__game; g.enemies = g.enemies.filter(e => !e.boss); g.eb = []; g.popups = [];
   g.spawnFormation(7, 1, 0, false, -1); g.spawnFormation(6, 0, 2, false, -1);
-  g.collect({ kind: "L", x: g.px, y: g.py, vx: 0, vy: 0, t: 0 });
+  g.pilot = 4; g.collect({ kind: "S", x: g.px, y: g.py, vx: 0, vy: 0, t: 0 });
   g.onNet({ type: "attack", from: 5, to: -1, tier: 2, power: 20, variant: 3 }); });
 await p.waitForTimeout(900);
 const zap0 = await p.evaluate(() => [window.__game.zapT.toFixed(1), window.__game.bolts.length, window.__game.score]);
