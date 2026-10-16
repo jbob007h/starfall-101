@@ -234,30 +234,39 @@ class Game {
   renderPilot() {
     const n = PILOT_COUNT + 1, sel = this.pilotSel, rnd_ = sel >= PILOT_COUNT, blink = Math.floor(this.realT * 3) % 2 === 0, DIMT = "#8a7ab8";
     drawText(ctx, "CHOOSE YOUR PILOT", W / 2, 14, YEL, 3, "center", MAG);
-    drawText(ctx, "SHOWN ON YOUR HUD, TO PLAYERS TARGETING YOU AND IN THE FINAL DUEL", W / 2, 36, DIMT, 1, "center");
-    ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(20, 52, 311, 245); this.frame(20, 52, 311, 245, CYA);
+    ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(20, 40, 311, 262); this.frame(20, 40, 311, 262, CYA);
     for (let i = 0; i < n; i++) {
-      // 15 pilots + RANDOM: 4 columns x 4 rows of 70x58 cards (76px column / 60px row pitch) inside the 311x245 panel
-      const cx = 26 + (i % PILOT_COLS) * 76, cy = 57 + Math.floor(i / PILOT_COLS) * 60, on = i === sel, mx = cx + 32;
-      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 3, cy - 3, 70, 58); this.frame(cx - 3, cy - 3, 70, 58, on ? YEL : "#3a3070");
-      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, mx - 24, cy, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], mx, cy + 50, on ? WHT : DIMT, 1, "center"); }
-      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(mx - 24, cy, 48, 48); drawText(ctx, "?", mx, cy + 12, DIMT, 5, "center"); drawText(ctx, "RANDOM", mx, cy + 50, on ? WHT : DIMT, 1, "center"); }
-      if (on && blink) { drawText(ctx, ">", cx, cy + 20, YEL, 1); drawText(ctx, "<", cx + 59, cy + 20, YEL, 1); }
+      // 15 pilots + RANDOM: 4 columns x 4 rows of 72x62 cards (76px column / 65px row pitch) inside the 311x262 panel
+      const cx = 25 + (i % PILOT_COLS) * 76, cy = 45 + Math.floor(i / PILOT_COLS) * 65, on = i === sel, mx = cx + 33;
+      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 3, cy - 3, 72, 62); this.frame(cx - 3, cy - 3, 72, 62, on ? YEL : "#3a3070");
+      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, mx - 24, cy, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], mx, cy + 51, on ? WHT : DIMT, 1, "center"); }
+      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(mx - 24, cy, 48, 48); drawText(ctx, "?", mx, cy + 12, DIMT, 5, "center"); drawText(ctx, "RANDOM", mx, cy + 51, on ? WHT : DIMT, 1, "center"); }
+      if (on && blink) { drawText(ctx, ">", cx - 1, cy + 21, YEL, 1); drawText(ctx, "<", cx + 61, cy + 21, YEL, 1); }
     }
-    ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(346, 52, 275, 245); this.frame(346, 52, 275, 245, MAG);
+    ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(346, 40, 275, 262); this.frame(346, 40, 275, 262, MAG);
     const nm = rnd_ ? "RANDOM" : PILOT_NAMES[sel];
-    if (rnd_) { ctx.fillStyle = "#05040c"; ctx.fillRect(358, 64, 140, 140); ctx.fillStyle = MAG; ctx.fillRect(359, 65, 138, 138); ctx.fillStyle = "#0c0824"; ctx.fillRect(360, 66, 136, 136); drawText(ctx, "?", 428, 104, DIMT, 12, "center"); }
-    else drawPilot(ctx, sel, 136, 360, 66, MAG);
-    drawText(ctx, nm, 508, 70, WHT, nm.length > 6 ? 2 : 3);
-    drawText(ctx, rnd_ ? "ANY PILOT" : "PILOT " + String(sel + 1).padStart(2, "0"), 508, 92, MAG, 1);
-    (rnd_ ? ["A NEW PILOT", "EVERY MATCH."] : PILOT_BIOS[nm] ?? []).forEach((l, k) => drawText(ctx, l, 508, 108 + k * 10, DIMT, 1));
-    if (!rnd_) {
-      drawText(ctx, "IN THE MATCH", 360, 212, MAG, 1);
-      drawPilot(ctx, sel, 48, 362, 224, CYA); drawText(ctx, "YOUR HUD", 386, 278, DIMT, 1, "center");
-      drawPilot(ctx, sel, 40, 424, 228, YEL); drawText(ctx, "AS A TARGET", 444, 278, DIMT, 1, "center");
-    }
+    if (rnd_) { ctx.fillStyle = "#05040c"; ctx.fillRect(358, 52, 140, 140); ctx.fillStyle = MAG; ctx.fillRect(359, 53, 138, 138); ctx.fillStyle = "#0c0824"; ctx.fillRect(360, 54, 136, 136); drawText(ctx, "?", 428, 92, DIMT, 12, "center"); }
+    else drawPilot(ctx, sel, 136, 360, 54, MAG);
+    drawText(ctx, nm, 508, 58, WHT, nm.length > 6 ? 2 : 3);
+    (rnd_ ? ["A NEW PILOT", "EVERY MATCH."] : PILOT_BIOS[nm] ?? []).forEach((l, k) => drawText(ctx, l, 508, 84 + k * 10, DIMT, 1));
+    // special weapon card: what the S pickup gives this pilot
+    const sp = rnd_ ? null : SPECIALS[PILOT_SPECIAL[sel] ?? 0], col = sp ? sp.col : DIMT;
+    drawText(ctx, "SPECIAL WEAPON", 360, 210, MAG, 1);
+    ctx.fillStyle = "#0c0824"; ctx.fillRect(358, 222, 251, 66); this.frame(358, 222, 251, 66, col);
+    ctx.fillStyle = "#05040c"; ctx.fillRect(366, 230, 50, 50); this.frame(366, 230, 50, 50, col);
+    if (sp) { this.drawSpecialIcon(PILOT_SPECIAL[sel] ?? 0, 391, 255, col); drawText(ctx, sp.name, 426, 238, col, sp.name.length > 9 ? 2 : 3); drawText(ctx, "FROM THE S PICKUP", 426, 268, DIMT, 1); }
+    else { drawText(ctx, "?", 391, 243, DIMT, 4, "center"); drawText(ctx, "?", 426, 238, DIMT, 3); drawText(ctx, "DEPENDS ON THE PILOT", 426, 268, DIMT, 1); }
     drawText(ctx, (pad.connected ? "D-PAD CHOOSE   A CONFIRM   B BACK" : "ARROWS CHOOSE   ENTER CONFIRM   ESC BACK"), W / 2, 312, CYA, 1, "center");
-    drawText(ctx, "PILOT NAME: " + this.name, W / 2, 330, YEL, 1, "center");
+    drawText(ctx, "PLAYER NAME: " + this.name, W / 2, 330, YEL, 1, "center");
+  }
+  /** Small pixel icon for a special weapon, centred on (x, y): 0 lightning bolt, 1 fireball, 2 shuriken. */
+  drawSpecialIcon(k: number, x: number, y: number, col: string) {
+    ctx.save(); ctx.lineJoin = "miter"; ctx.lineCap = "square";
+    if (k === 0) { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x + 4, y - 16); ctx.lineTo(x - 9, y + 2); ctx.lineTo(x - 1, y + 2); ctx.lineTo(x - 5, y + 16); ctx.lineTo(x + 9, y - 3); ctx.lineTo(x + 1, y - 3); ctx.closePath(); ctx.fill(); ctx.strokeStyle = WHT; ctx.lineWidth = 1; ctx.stroke(); }
+    else if (k === 1) { ctx.fillStyle = "#ff5020"; ctx.beginPath(); ctx.moveTo(x, y - 17); ctx.quadraticCurveTo(x + 13, y - 2, x + 10, y + 7); ctx.arc(x, y + 6, 10, 0.1, Math.PI - 0.1); ctx.quadraticCurveTo(x - 12, y - 4, x, y - 17); ctx.fill();
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y + 6, 7, 0, 6.283); ctx.fill(); ctx.fillStyle = YEL; ctx.beginPath(); ctx.arc(x, y + 7, 3.5, 0, 6.283); ctx.fill(); }
+    else { ctx.fillStyle = col; ctx.beginPath(); for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + 0.3, r = i % 2 ? 5 : 16; ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } ctx.closePath(); ctx.fill(); ctx.strokeStyle = MAG; ctx.lineWidth = 1; ctx.stroke(); ctx.fillStyle = "#05040c"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, 6.283); ctx.fill(); }
+    ctx.restore();
   }
   koName(k: number) { return k === -1 ? this.name : k >= 0 ? this.rivals[k]?.name ?? "?" : "STARFALL"; }
   renderLeaderboard(win: boolean) {
