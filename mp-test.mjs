@@ -6,7 +6,7 @@ const names = ["ALPHA", "BRAVO", "CHARLIE"]; const pages = []; const errs = [];
 const PILOT = { ALPHA: 2, BRAVO: 5, CHARLIE: 3 }; // each human's saved pilot choice
 for (const n of names) {
   const ctx = await b.newContext({ viewport: { width: 1280, height: 720 } }); const p = await ctx.newPage();
-  await p.addInitScript(v => { try { localStorage.setItem("sf101pilot", String(v)); } catch {} }, PILOT[n]);
+  await p.addInitScript(v => { try { localStorage.setItem("sf101pilot2", String(v)); } catch {} }, PILOT[n]);
   if (n === "ALPHA") await p.addInitScript(() => { // stub controller for spectate switching
     const btn = () => ({ pressed: false, touched: false, value: 0 });
     const gp = { id: "Stub Xbox Controller (STANDARD GAMEPAD)", index: 0, connected: true, mapping: "standard", timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
@@ -88,7 +88,7 @@ await pages[0].waitForTimeout(1500);
 const nm = await Promise.all([0, 1].map(i => ev(pages[i], () => [window.__game.state, window.__game.rivals.filter(r => !r.isBot).map(r => r.name).join()])));
 console.log("new match:", JSON.stringify(nm)); ok(nm[0][0] === "play" && nm[0][1] === "BRAVO" && nm[1][1] === "ALPHA", "new online match starts with both humans");
 // quit mid-match from the pause menu: server KOs ALPHA for BRAVO
-await pages[0].keyboard.press("Escape"); await pages[0].keyboard.press("ArrowDown"); await pages[0].keyboard.press("Enter"); await pages[0].waitForTimeout(800);
+await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(150); await pages[0].keyboard.press("ArrowDown"); await pages[0].waitForTimeout(150); await pages[0].keyboard.press("Enter"); await pages[0].waitForTimeout(800);
 ok(await ev(pages[0], () => window.__game.state) === "title", "online pause > QUIT TO TITLE");
 ok(await ev(pages[1], () => !window.__game.rivals.find(r => r.name === "ALPHA").alive), "server KOs the pilot who quit");
 console.log("errors:", errs); if (errs.length) process.exitCode = 1;
