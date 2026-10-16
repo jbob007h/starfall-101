@@ -25,7 +25,8 @@ export type NetEvent =
   | { type: "matchEnd"; winner: number }
   | { type: "disconnected"; reason: string }
   | { type: "snap"; id: number; snap: Snap }   // live gameplay of a watched human (spectator)
-  | { type: "watch"; on: boolean };            // someone is spectating you: start/stop sending snapshots
+  | { type: "watch"; on: boolean }
+  | { type: "idleKO" };                       // the server KO'd us for going silent mid-match            // someone is spectating you: start/stop sending snapshots
 /** Compact gameplay snapshot (~15 Hz) relayed through the server to spectators. Ids are game-local on the client side.
  *  p: [px, py, hp, bombs, chain, chainCol, eligible, chainT%, score, weapon, shield, focus, inv, badges, mode, freeze, zap, regen, starBoost, kos, bombFx%]
  *  e: enemies [uid, x, y, spr, col, up, hitflash] or bosses [uid, x, y, -1-variant, hp, maxhp, sender, vis%, eye, tur0, tur1, turMax, ...segXY]
@@ -171,6 +172,7 @@ export class WebSocketTransport implements Transport {
       case "lateJoin": this.map = new SlotMap(m.you);
         this.emit({ type: "lateJoin", players: (m.players as any[]).filter(p => p.id !== m.you).map(p => ({ id: L(p.id), name: p.name, isBot: p.isBot, avatar: typeof p.avatar === "number" ? p.avatar : undefined, alive: !!p.alive, place: p.place | 0 })).sort((a, b) => a.id - b.id) }); break;
       case "watch": this.emit({ type: "watch", on: !!m.on }); break;
+      case "idleKO": this.emit({ type: "idleKO" }); break;
       case "snap": { if (m.id === this.map.me || !Array.isArray(m.p)) break;
         const e = (Array.isArray(m.e) ? m.e : []).map((q: number[]) => { if (q[3] < 0) { q = q.slice(); q[6] = L(q[6]); } return q; });
         this.emit({ type: "snap", id: L(m.id), snap: { p: m.p, e, b: m.b || [], pb: m.pb || [], it: m.it || [], tg: (m.tg || []).map(L) } }); break; }

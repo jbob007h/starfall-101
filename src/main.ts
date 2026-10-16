@@ -339,6 +339,7 @@ class Game {
       }
       case "snap": if (e.id === this.spec) this.addSnap(e.snap); break;
       case "watch": this.watched = e.on; this.snapT = 0; break;
+      case "idleKO": if (this.state === "play" && !this.dead) { this.netMsg = "KO: IDLE TOO LONG"; this.gameOver(); } break;
       case "matchEnd": if (this.late) { this.late = false; this.stopSpectate(); this.startLobby(); break; } this.stopSpectate(); if (e.winner === this.net.localId && !this.dead && this.state === "play") { for (const r of this.rivals) r.alive = false; } break; // win resolves in updateRivals
       case "disconnected":
         this.spec = -1; this.specSnaps = []; this.watched = false; this.netMsg = "OFFLINE: " + e.reason; const was = this.state; this.setNet(new LocalSimTransport());
@@ -428,7 +429,7 @@ class Game {
     if (actHit("mute")) audio.toggleMute();
     if (actHit("song")) { audio.setSoundtrack(audio.soundtrack + 1); this.popup("MUSIC: " + audio.soundtrackName, PW / 2, PH - 84, CYA, 1.5); }
     audio.pauseMusic(this.paused && !this.liveMatch());
-    if (this.paused && !this.liveMatch()) return; // real pause only solo / vs bots; with 2+ humans the menu overlays a running match
+    if (this.paused && !this.liveMatch()) { if (this.net.online && !this.dead) this.net.sendState(this.hp, this.badges, this.targets, this.eligible); return; } // heartbeat: the server KOs humans who go silent // real pause only solo / vs bots; with 2+ humans the menu overlays a running match
     for (let k = 0; k < 4; k++) if (!this.paused && actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
     if (this.hitstop > 0) { this.hitstop--; return; }
     if (this.slow > 0) { this.slow -= dt; dt *= 0.35; }

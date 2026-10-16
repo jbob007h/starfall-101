@@ -113,5 +113,43 @@ ok(await ev(late[1], () => window.__game.state + "," + window.__game.late) === "
 await ev(late[0], () => window.__game.net.ws.send(JSON.stringify({ t: "debugEnd" }))); await late[0].waitForTimeout(1500);
 const nl = await ev(late[0], () => [window.__game.state, window.__game.late, window.__game.lobbyLog.join("|")]);
 console.log("after match end:", JSON.stringify(nl)); ok(nl[0] === "lobby" && !nl[1], "late joiner joins the next lobby automatically when the match ends");
+// ---- final duel end (2nd-place KO): the match is over for everyone, the lock releases, NEW MATCH -> fresh lobby (loser, winner, earlier spectator)
+for (const p of late) await ev(p, () => window.__game.quitToTitle()); await late[0].waitForTimeout(300);
+const health = async () => JSON.parse(await (await fetch(URL + "healthz")).text());
+for (const n of ["ALPHA2", "BRAVO2", "CHARLIE2"]) { const ctx = await b.newContext(); const p = await ctx.newPage(); p.on("pageerror", e => errs.push(n + ": " + e));
+  await p.goto(URL + "?name=" + n); await p.waitForFunction(() => window.__netReady); pages.push(p); }
+const [A, B, C] = pages.slice(-3);
+for (const p of [A, B, C]) await ev(p, () => window.__game.startLobby()); await A.waitForTimeout(500);
+for (const p of [A, B, C]) await ev(p, () => window.__game.net.requestStart());
+await A.waitForFunction(() => window.__game.state === "play", null, { timeout: 30000 }); await A.waitForTimeout(800);
+await ev(C, () => window.__game.gameOver()); await C.waitForTimeout(500); // CHARLIE out early -> spectates
+const keepB = await ev(A, () => { const g = window.__game, r = g.rivals.find(r => r.name === "BRAVO2"); return g.net.map.toGlobal(r.id); });
+await ev(A, k => window.__game.net.ws.send(JSON.stringify({ t: "debugDuel", keep: k })), keepB); await A.waitForTimeout(1500);
+console.log("duel:", await Promise.all([A, B, C].map(p => ev(p, () => [window.__game.state, window.__game.duel, window.__game.aliveAI]))));
+await ev(A, () => window.__game.gameOver()); await A.waitForTimeout(1500); // ALPHA loses the duel: 2nd place
+const st = await Promise.all([A, B, C].map(p => ev(p, () => [window.__game.state, window.__game.place, window.__game.spec])));
+const h = await health(); console.log("after duel:", JSON.stringify(st), JSON.stringify(h));
+ok(st[0][0] === "over" && st[0][1] === 2 && st[1][0] === "win" && st[2][0] === "over", "duel KO: ALPHA 2nd (over), BRAVO wins, CHARLIE's spectating ends");
+ok(!h.live, "server releases the one-match lock as soon as the duel ends");
+for (const [p, nm] of [[A, "ALPHA (2nd)"], [B, "BRAVO (winner)"], [C, "CHARLIE (out earlier)"]]) {
+  await ev(p, () => { window.__game.endSel = 0; }); await p.keyboard.press("Enter"); await p.waitForTimeout(700);
+  const r = await ev(p, () => [window.__game.state, window.__game.late, window.__game.spec]); ok(r[0] === "lobby" && !r[1], nm + ": NEW MATCH -> fresh lobby " + JSON.stringify(r)); }
+// ---- CPU-only match: when every human is out, the match ends at once (no waiting on CPUs) and NEW MATCH / joining gets a fresh lobby
+for (const p of [A, B, C]) await ev(p, () => window.__game.quitToTitle()); await A.waitForTimeout(300);
+for (const p of [A, B]) await ev(p, () => window.__game.startLobby()); await A.waitForTimeout(400); for (const p of [A, B]) await ev(p, () => window.__game.net.requestStart());
+await A.waitForFunction(() => window.__game.state === "play", null, { timeout: 30000 }); await A.waitForTimeout(500);
+ok((await health()).live, "CPU-only check: match running with 2 humans");
+await ev(A, () => window.__game.gameOver()); await ev(B, () => window.__game.gameOver()); await A.waitForTimeout(800);
+const hc = await health(); console.log("all humans out:", JSON.stringify(hc)); ok(!hc.live, "all humans out -> CPU-only match ends at once (lock released)");
+await ev(C, () => window.__game.startLobby()); await C.waitForTimeout(600);
+ok(await ev(C, () => window.__game.state + "," + window.__game.late) === "lobby,false", "joining after a CPU-only end -> fresh lobby (no spectating)");
+await ev(A, () => { window.__game.endSel = 0; }); await A.keyboard.press("Enter"); await A.waitForTimeout(600);
+ok(await ev(A, () => window.__game.state) === "lobby", "NEW MATCH after a CPU-only end -> fresh lobby");
+// ---- a silent human (closed laptop / background tab) never holds the lock: idle KO -> match over
+await ev(A, () => window.__game.net.requestStart()); await ev(C, () => window.__game.net.requestStart());
+await A.waitForFunction(() => window.__game.state === "play", null, { timeout: 30000 }); await A.waitForTimeout(500);
+await ev(C, () => window.__game.gameOver()); await ev(A, () => window.__game.net.ws.send(JSON.stringify({ t: "debugIdle" }))); await A.waitForTimeout(1200);
+const hi = await health(); const ai = await ev(A, () => [window.__game.state, window.__game.netMsg]); console.log("idle:", JSON.stringify(hi), JSON.stringify(ai));
+ok(!hi.live && ai[0] === "over", "silent human is KO'd for idling -> no humans left -> match over");
 console.log("errors:", errs); if (errs.length) process.exitCode = 1;
 await b.close();

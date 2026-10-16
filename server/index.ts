@@ -7,6 +7,7 @@ import { MatchSim, Tier, botNames } from "../src/sim";
 
 const PORT = Number(process.env.PORT) || 8080;
 const MAX = 101;
+const IDLE_KO = Number(process.env.IDLE_KO || 20); // seconds without gameplay messages before a human is KO'd
 const LOBBY_TIMEOUT = Number(process.env.LOBBY_TIMEOUT || 20); // seconds after first human joins
 const DIST = path.resolve(__dirname, "../../dist");
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".png": "image/png", ".css": "text/css", ".json": "application/json", ".ogg": "audio/ogg" };
@@ -25,7 +26,7 @@ const server = http.createServer((req, res) => {
 
 /** Pilot roster size; must match src/pilots_data.ts (15 AI-art pilots, ids 0-14). */
 const PILOT_COUNT = 15;
-interface Client { ws: WebSocket; conn: number; name: string; avatar?: number; match: Match | null; slot: number; ready: boolean; alive: boolean; }
+interface Client { ws: WebSocket; conn: number; name: string; avatar?: number; match: Match | null; slot: number; ready: boolean; alive: boolean; seen: number; }
 interface Match { id: number; sim: MatchSim; clients: Map<number, Client>; /* slot -> client */ stateT: number;
   watchers: Map<Client, number>; /* spectator -> watched slot */ watched: Set<number>; /* slots told to stream snapshots */
   late: Set<Client>; /* joined while this match was running: spectators only */ over: boolean; players: { id: number; name: string; isBot: boolean; avatar?: number }[]; hidden: number; }
@@ -90,17 +91,18 @@ function startMatch() {
   });
   const list = players.map((p, i) => ({ id: i, name: p.name, isBot: p.isBot, avatar: p.avatar }));
   m.players = list; m.hidden = Math.max(0, list.findIndex(p => p.isBot)); // late joiners have no slot: one bot is left off their 100-cell grid
-  players.forEach((p, i) => { if (p.c) { p.c.match = m; p.c.slot = i; p.c.alive = true; m.clients.set(i, p.c); send(p.c, { t: "matchStart", you: i, players: list, seed: m.id }); } });
+  players.forEach((p, i) => { if (p.c) { p.c.seen = Date.now(); p.c.match = m; p.c.slot = i; p.c.alive = true; m.clients.set(i, p.c); send(p.c, { t: "matchStart", you: i, players: list, seed: m.id }); } });
   matches.set(m.id, m);
   console.log(`match ${m.id} started: ${humans.length} humans + ${MAX - humans.length} bots`);
 }
 
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 64 * 1024 });
 wss.on("connection", ws => {
-  const c: Client = { ws, conn: nextConn++, name: "PILOT", match: null, slot: -1, ready: false, alive: false };
+  const c: Client = { ws, conn: nextConn++, name: "PILOT", match: null, slot: -1, ready: false, alive: false, seen: Date.now() };
   send(c, { t: "welcome", conn: c.conn });
   ws.on("message", raw => {
     let m: any; try { m = JSON.parse(String(raw)); } catch { return; }
+    if ((m.t === "state" || m.t === "attack" || m.t === "snap") && !(c as any).silent) c.seen = Date.now();
     switch (m.t) {
       case "snap": if (c.match && c.alive) relaySnap(c.match, c, m); break;
       case "spec": if (c.match && !c.alive) setWatch(c.match, c, m.target | 0); break;
@@ -109,6 +111,9 @@ wss.on("connection", ws => {
       case "start": if (lobby.members.has(c.conn)) { c.ready = true; } break;
       case "attack": if (c.match && c.alive) { const tier = Math.max(0, Math.min(2, m.tier | 0)) as Tier; c.match.sim.humanAttack(c.slot, m.to | 0, tier, Math.max(0, Math.min(200, Number(m.power) || 0))); } break;
       case "state": if (c.match && c.alive) c.match.sim.humanState(c.slot, Math.max(0, Math.min(3, m.hp | 0)), Math.max(0, m.badges | 0), (Array.isArray(m.targets) ? m.targets : []).slice(0, 8).map((x: unknown) => Number(x) | 0), !!m.armed); break;
+      case "debugDuel": if (process.env.STARFALL_TEST && c.match) { const sim = c.match.sim as any, keep = m.keep | 0; // tests only: KO every slot except this player and slot `keep`
+        for (const x of sim.slots) if (x.alive && x.id !== c.slot && x.id !== keep) sim.eliminate(x, -2); } break;
+      case "debugIdle": if (process.env.STARFALL_TEST) { c.seen = 0; (c as any).silent = true; } break; // tests only: pretend this client went silent
       case "debugEnd": if (process.env.STARFALL_TEST && c.match) (c.match.sim as any).out.end(-1); break; // tests only: finish the running match now
       case "ko": if (c.match && c.alive) { c.match.sim.humanKO(c.slot, m.by | 0); c.alive = false; } break;
     }
@@ -128,6 +133,9 @@ setInterval(() => {
     else { const s = Math.ceil(left); if (s !== lobby.lastCd) { lobby.lastCd = s; lobbyBroadcast({ t: "lobbyCountdown", seconds: left, humans: lobby.members.size }); } }
   }
   for (const m of matches.values()) {
+    // players never wait on CPUs or on a silent client: a human with no gameplay traffic for IDLE_KO s (closed laptop, background tab) is KO'd;
+    // once no human is alive the sim resolves the bots instantly and ends the match, releasing the one-match lock
+    if (!m.over) for (const c of m.clients.values()) if (c.alive && now - c.seen > IDLE_KO * 1000) { console.log(`match ${m.id}: ${c.name} idle, KO`); c.alive = false; m.sim.humanKO(c.slot, -2); send(c, { t: "idleKO" }); }
     m.sim.tick(dt); m.stateT -= dt;
     if (m.stateT <= 0) {
       m.stateT = 0.25;
