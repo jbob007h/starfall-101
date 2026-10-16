@@ -419,9 +419,9 @@ class Game {
     }
     if (actHit("mute")) audio.toggleMute();
     if (actHit("song")) { audio.setSoundtrack(audio.soundtrack + 1); this.popup("MUSIC: " + audio.soundtrackName, PW / 2, PH - 84, CYA, 1.5); }
-    audio.pauseMusic(this.paused);
-    if (this.paused) return;
-    for (let k = 0; k < 4; k++) if (actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
+    audio.pauseMusic(this.paused && !this.liveMatch());
+    if (this.paused && !this.liveMatch()) return; // real pause only solo / vs bots; with 2+ humans the menu overlays a running match
+    for (let k = 0; k < 4; k++) if (!this.paused && actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
     if (this.hitstop > 0) { this.hitstop--; return; }
     if (this.slow > 0) { this.slow -= dt; dt *= 0.35; }
     this.time += dt;
@@ -432,7 +432,7 @@ class Game {
   }
 
   updatePlayer(dt: number) {
-    const bi = this.bot ? this.bot(this) : null;
+    const bi = this.bot ? this.bot(this) : this.paused ? { dx: 0, dy: 0, fire: false, focus: false } : null; // match menu open (live online match): hands off the ship
     this.focus = bi ? bi.focus : actDown("focus");
     const sp = this.focus ? 70 : 160; let dx = bi ? bi.dx : actVal("right") - actVal("left"), dy = bi ? bi.dy : actVal("down") - actVal("up"); // keys = 1, sticks analog
     const mag = Math.hypot(dx, dy); if (mag > 1) { dx /= mag; dy /= mag; }
@@ -447,7 +447,7 @@ class Game {
       }
       audio.shoot();
     }
-    if (actHit("bomb")) this.bomb();
+    if (!this.paused && actHit("bomb")) this.bomb();
     this.updateSpecial(dt); this.updateTriple(dt);
     if (this.hp < 3) { this.regen -= dt; if (this.regen <= 0) { this.hp++; this.regen = 20; this.popup("+1 HP", this.px, this.py - 16, CYA, 1); audio.power(); } } else this.regen = 20;
     // engine particles
@@ -790,7 +790,7 @@ class Game {
 
   hurt() {
     if (this.inv > 0 || this.dead) return;
-    if (this.shield) { this.shield = false; this.inv = 1.5; this.popup("SHIELD!", this.px, this.py - 14, CYA, 2); audio.power(); this.clearNear(50); return; }
+    if (this.shield) { this.shield = false; this.inv = 1.5; this.popup("GUARD!", this.px, this.py - 14, CYA, 2); audio.power(); this.clearNear(50); return; }
     this.hp--; this.inv = 2.2; this.regen = 20; this.weapon = Math.max(0, this.weapon - 1);
     audio.hurt(); audio.musicEvent("hurt"); this.shake = 9; this.hitstop = 8; this.flash = 0.25; this.flashCol = "#ff2040"; this.burst(this.px, this.py, SENT_COL, 30, 120);
     this.clearNear(60);
@@ -861,7 +861,7 @@ class Game {
       case "S": { const k = this.specKind = PILOT_SPECIAL[this.pilot] ?? 0, sp = SPECIALS[k]; this.zapT = SPECIAL_SECS; this.zapCd = 0; this.ringCd = 0;
         this.popup(sp.name + "!", this.px, this.py - 16, sp.col, 2); this.popup("SPECIAL WEAPON", this.px, this.py - 4, WHT, 1);
         if (k === 1) audio.inferno(); else if (k === 2) audio.blades(); else audio.lightning(); this.flash = 0.1; this.flashCol = sp.col; break; }
-      case "G": this.shield = true; this.popup("SHIELD!", this.px, this.py - 14, CYA, 1); audio.power(); break;
+      case "G": this.shield = true; this.popup("GUARD!", this.px, this.py - 14, CYA, 1); audio.power(); break;
       case "badge": this.badges++; this.popup("BADGE +10% ATK", this.px, this.py - 14, YEL, 1); audio.power(); this.burst(it.x, it.y, YEL, 12); break;
       case "star": this.starBoost += 6; this.popup("STARFALL! +6 POWER", this.px, this.py - 18, YEL, 1); audio.star(); this.flash = 0.12; this.flashCol = YEL; this.burst(it.x, it.y, YEL, 25, 120); break;
     }
@@ -1201,13 +1201,16 @@ class Game {
     for (let i = 0; i < DUEL_HP; i++) { ctx.fillStyle = i < r.hp ? (fl ? WHT : i < 4 ? "#ff3040" : MAG) : DIM; ctx.fillRect(Math.round(x + i * seg), y + 10, Math.ceil(seg) - 2, 6); }
   }
   drawPadMsg() { if (this.padMsgT > 0) { const w = textWidth(this.padMsg, 1) + 16; ctx.fillStyle = "#000"; ctx.fillRect((W - w) / 2, 2, w, 13); this.frame((W - w) / 2, 2, w, 13, "#60ff80"); drawText(ctx, this.padMsg, W / 2, 6, "#60ff80", 1, "center"); } }
+  /** Online match with another human in it: the pause menu must not freeze this player's field (it is a shared race). */
+  liveMatch() { return this.net.online && this.rivals.some(r => !r.isBot); }
   renderPause() {
     const w = 196, h = 84, x = PX + (PW - w) / 2, y = PY + PH / 2 - h / 2;
     ctx.fillStyle = "rgba(6,2,14,0.88)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, CYA);
-    drawText(ctx, "PAUSED", PX + PW / 2, y + 8, CYA, 3, "center", "#000");
-    ["RESUME", this.net.online ? "QUIT TO TITLE (FORFEIT)" : "QUIT TO TITLE"].forEach((t, i) => { const sel = i === this.pauseSel;
+    const live = this.liveMatch();
+    if (live) drawText(ctx, "MATCH IN PROGRESS", PX + PW / 2, y + 10, YEL, 2, "center", "#000"); else drawText(ctx, "PAUSED", PX + PW / 2, y + 8, CYA, 3, "center", "#000");
+    [live ? "BACK TO MATCH" : "RESUME", this.net.online ? "QUIT TO TITLE (FORFEIT)" : "QUIT TO TITLE"].forEach((t, i) => { const sel = i === this.pauseSel;
       drawText(ctx, (sel ? "> " : "") + t + (sel ? " <" : ""), PX + PW / 2, y + 34 + i * 12, sel ? YEL : "#8070b0", 1, "center"); });
-    drawText(ctx, pad.connected ? "D-PAD PICK  A SELECT  START/B RESUME" : "UP/DOWN PICK  ENTER SELECT  " + kn("pause") + "/ESC RESUME", PX + PW / 2, y + h - 12, CYA, 1, "center");
+    drawText(ctx, pad.connected ? (live ? "D-PAD PICK  A SELECT  START/B CLOSE" : "D-PAD PICK  A SELECT  START/B RESUME") : "UP/DOWN PICK  ENTER SELECT  " + kn("pause") + (live ? "/ESC CLOSE" : "/ESC RESUME"), PX + PW / 2, y + h - 12, CYA, 1, "center");
   }
   centerBox(lines: string[], col: string) {
     const w = 196, h = 20 + lines.length * 14, x = PX + (PW - w) / 2, y = PY + PH / 2 - h / 2;
@@ -1240,7 +1243,7 @@ class Game {
     if (bgOnly) { drawText(ctx, "STARFALL 101", W / 2, 120, MAG, 6, "center", "#3a0040"); return; }
     drawText(ctx, "STARFALL", W / 2, 70 + bob, MAG, 10, "center", "#3a0040");
     drawText(ctx, "101", W / 2, 130 + bob, CYA, 8, "center", "#003040");
-    drawText(ctx, "101-PLAYER NEON SHOOTER BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
+    drawText(ctx, "101-PLAYER LAST PILOT STANDING BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
     drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 274, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
     ["LAUNCH", "PILOT", "CONTROLS", "MUSIC"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
@@ -1274,7 +1277,7 @@ class Game {
     drawText(ctx, "BADGES", 8, 78, CYA, 1); for (let i = 0; i < Math.min(this.badges, 12); i++) ctx.drawImage(badgeSpr, 44 + i * 9, 76);
     if (this.badges > 12) drawText(ctx, "+" + (this.badges - 12), 154, 78, YEL, 1);
     drawText(ctx, "KOS " + this.kos, 8, 92, CYA, 1); drawText(ctx, "STAR BOOST +" + this.starBoost, 60, 92, YEL, 1);
-    if (this.shield) drawText(ctx, "SHIELD UP", 8, 104, CYA, 1);
+    if (this.shield) drawText(ctx, "GUARD UP", 8, 104, CYA, 1);
     // target box
     ctx.fillStyle = "#14062a"; ctx.fillRect(7, 116, LW - 10, 64); this.frame(7, 116, LW - 10, 64, YEL);
     drawText(ctx, "TARGET: " + MODES[this.mode], 12, 121, YEL, 1);

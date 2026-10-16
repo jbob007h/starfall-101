@@ -88,7 +88,12 @@ await pages[0].waitForTimeout(1500);
 const nm = await Promise.all([0, 1].map(i => ev(pages[i], () => [window.__game.state, window.__game.rivals.filter(r => !r.isBot).map(r => r.name).join()])));
 console.log("new match:", JSON.stringify(nm)); ok(nm[0][0] === "play" && nm[0][1] === "BRAVO" && nm[1][1] === "ALPHA", "new online match starts with both humans");
 // quit mid-match from the pause menu: server KOs ALPHA for BRAVO
-await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(150); await pages[0].keyboard.press("ArrowDown"); await pages[0].waitForTimeout(150); await pages[0].keyboard.press("Enter"); await pages[0].waitForTimeout(800);
+// 2+ humans online: Esc opens the MATCH IN PROGRESS menu, which must NOT freeze the match (field time and music keep going)
+await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(150);
+const t0 = await ev(pages[0], () => [window.__game.paused, window.__game.liveMatch(), window.__game.time]); await pages[0].waitForTimeout(700);
+const t1 = await ev(pages[0], () => [window.__game.paused, window.__audio.music?.paused ?? false, window.__game.time]);
+console.log("match menu:", JSON.stringify({ t0, t1 })); ok(t0[0] && t0[1] && t1[0] && !t1[1] && t1[2] - t0[2] > 0.4, "online 2+ humans: Esc menu (MATCH IN PROGRESS) keeps the match running");
+await pages[0].keyboard.press("ArrowDown"); await pages[0].waitForTimeout(150); await pages[0].keyboard.press("Enter"); await pages[0].waitForTimeout(800);
 ok(await ev(pages[0], () => window.__game.state) === "title", "online pause > QUIT TO TITLE");
 ok(await ev(pages[1], () => !window.__game.rivals.find(r => r.name === "ALPHA").alive), "server KOs the pilot who quit");
 console.log("errors:", errs); if (errs.length) process.exitCode = 1;
