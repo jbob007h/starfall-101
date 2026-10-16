@@ -15,7 +15,8 @@ const PX = 184, PY = 4, PW = 272, PH = 324; const BY = PY + PH + 3; // bottom HU
 const COLORS = ["#ff3cc8", "#3cf0ff", "#ffe040", "#60ff80"];
 const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
 const SENT = 4; const SENT_COL = "#ff5050";
-const PILOT_COLS = 5; // pilot-select grid columns (14 pilots + RANDOM = 5x3)
+const MENU_STATES: string[] = ["title", "name", "pilot", "controls", "lobby"];
+const PILOT_COLS = 4; // pilot-select grid columns (15 pilots + RANDOM = 4x4)
 const MAG = "#ff3cc8", CYA = "#3cf0ff", YEL = "#ffe040", WHT = "#ffffff", DIM = "#2a1440";
 const CELL_W = 16, CELL_H = 32;
 /** Attack tier thresholds (chain size): >= WAVE_AT sends a bullet wave, reaching BOSS_AT auto-sends a mini-boss. */
@@ -59,7 +60,7 @@ const POWERUP_WEIGHTS: [string, number][] = [["W", 28], ["B", 18], ["G", 18], ["
 /** Special power-up (S): the weapon depends on the pilot flown. 0 LIGHTNING, 1 INFERNO, 2 STORM BLADES. */
 const SPECIALS = [{ name: "LIGHTNING", hud: "ZAP", col: "#3cf0ff" }, { name: "INFERNO", hud: "FIRE", col: "#ff9030" }, { name: "STORM BLADES", hud: "BLADE", col: "#ffffff" }];
 //                    KAGE VOSS SABLE IRONCLAD HEX ZORUK WRAITH FANG MARISOL BRICK TALON VESPER JINX CINDER
-export const PILOT_SPECIAL = [2, 0, 2, 0, 0, 1, 0, 2, 0, 1, 2, 2, 1, 1];
+export const PILOT_SPECIAL = [2, 0, 2, 0, 0, 1, 0, 2, 0, 1, 2, 2, 1, 1, 1];
 const SPECIAL_SECS = 5;
 function pickPowerup() { let r = Math.random() * 100; for (const [k, w] of POWERUP_WEIGHTS) { if ((r -= w) < 0) return k; } return "W"; }
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
@@ -236,12 +237,12 @@ class Game {
     drawText(ctx, "SHOWN ON YOUR HUD, TO PLAYERS TARGETING YOU AND IN THE FINAL DUEL", W / 2, 36, DIMT, 1, "center");
     ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(20, 52, 311, 245); this.frame(20, 52, 311, 245, CYA);
     for (let i = 0; i < n; i++) {
-      // 14 pilots + RANDOM: 5 columns x 3 rows of 48px cards (60px column / 79px row pitch) inside the 311x245 panel
-      const cx = 26 + (i % PILOT_COLS) * 60, cy = 58 + Math.floor(i / PILOT_COLS) * 79, on = i === sel;
-      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 3, cy - 3, 58, 75); this.frame(cx - 3, cy - 3, 58, 75, on ? YEL : "#3a3070");
-      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, cx + 2, cy + 2, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], cx + 26, cy + 58, on ? WHT : DIMT, 1, "center"); }
-      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(cx + 2, cy + 2, 48, 48); drawText(ctx, "?", cx + 26, cy + 14, DIMT, 5, "center"); drawText(ctx, "RANDOM", cx + 26, cy + 58, on ? WHT : DIMT, 1, "center"); }
-      if (on && blink && PILOT_NAMES[i]?.length !== 8) { drawText(ctx, ">", cx - 1, cy + 58, YEL, 1); drawText(ctx, "<", cx + 49, cy + 58, YEL, 1); }
+      // 15 pilots + RANDOM: 4 columns x 4 rows of 70x58 cards (76px column / 60px row pitch) inside the 311x245 panel
+      const cx = 26 + (i % PILOT_COLS) * 76, cy = 57 + Math.floor(i / PILOT_COLS) * 60, on = i === sel, mx = cx + 32;
+      ctx.fillStyle = on ? "#24104a" : "#120d2e"; ctx.fillRect(cx - 3, cy - 3, 70, 58); this.frame(cx - 3, cy - 3, 70, 58, on ? YEL : "#3a3070");
+      if (i < PILOT_COUNT) { drawPilot(ctx, i, 48, mx - 24, cy, on ? CYA : "#3a3070"); drawText(ctx, PILOT_NAMES[i], mx, cy + 50, on ? WHT : DIMT, 1, "center"); }
+      else { ctx.fillStyle = "#0c0824"; ctx.fillRect(mx - 24, cy, 48, 48); drawText(ctx, "?", mx, cy + 12, DIMT, 5, "center"); drawText(ctx, "RANDOM", mx, cy + 50, on ? WHT : DIMT, 1, "center"); }
+      if (on && blink) { drawText(ctx, ">", cx, cy + 20, YEL, 1); drawText(ctx, "<", cx + 59, cy + 20, YEL, 1); }
     }
     ctx.fillStyle = "rgba(13,10,34,0.92)"; ctx.fillRect(346, 52, 275, 245); this.frame(346, 52, 275, 245, MAG);
     const nm = rnd_ ? "RANDOM" : PILOT_NAMES[sel];
@@ -364,6 +365,7 @@ class Game {
     }
     if (this.state !== "play") {
       this.updateFx(dt);
+      if (MENU_STATES.includes(this.state)) audio.titleMusic(); // title theme on title / menus (starts once audio is unlocked by an input)
       if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
       if (this.state === "lobby") { this.tickLobby(dt); if (hit("Escape", "PadB")) { this.quitToTitle(); return; } if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
       if (this.state === "title") {
@@ -1502,6 +1504,8 @@ class Game {
 
 const game = new Game(); game.bindNet(); (window as any).__game = game; (window as any).__fbTune = FB_TUNE; (window as any).__audio = audio; (window as any).__renderMusicPreview = renderMusicPreview; (window as any).__soundtracks = TRACKS.map(t => ({ id: t.id, name: t.title, bpm: t.bpm, sections: t.sections.map(s => ({ id: s.id, name: s.name, bpm: s.bpm, bars: s.chords.trim().split(/\s+/).length })) }));
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
+// browser autoplay rules: unlock audio on the first key / click / tap on a menu screen so the title theme can start
+for (const ev of ["keydown", "pointerdown"]) addEventListener(ev, () => { if (MENU_STATES.includes(game.state) && audio.ctx?.state !== "running") audio.init(); });
 chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };
 function loop(now: number) {

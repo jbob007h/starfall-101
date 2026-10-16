@@ -37,7 +37,7 @@ await p.evaluate(() => {
   };
 });
 if (ONLY === "grid") { // per-boss rate grid: node balance-test.mjs N 0 grid  -> one JSON line per boss/multiplier
-  for (let i = 0; i < 14; i++) for (const m of [0.7, 0.85, 1, 1.15, 1.3]) {
+  for (let i = 0; i < 15; i++) for (const m of [0.7, 0.85, 1, 1.15, 1.3]) {
     const r = await p.evaluate(([i, m, N]) => { const g = window.__game; let hits = 0, ttk = 0;
       for (let k = 0; k < N; k++) { window.__fbTune.rate[i] = m; window.__arena(true); const e = g.spawnFinal(i, 0); g.cutIn = null; while (!e.dead && e.fb.t < 150) { g.formCd = 1e9; g.update(1 / 60); } hits += g.hits; ttk += e.fb.t; }
       window.__fbTune.rate[i] = 1; return { i, m, hits: hits / N, ttk: ttk / N }; }, [i, m, BR]);
@@ -46,7 +46,7 @@ if (ONLY === "grid") { // per-boss rate grid: node balance-test.mjs N 0 grid  ->
   await b.close(); process.exit(0);
 }
 const boss = [];
-for (let i = 0; i < 14 && ONLY !== "spec"; i++) {
+for (let i = +(process.env.FROM || 0); i < 15 && ONLY !== "spec"; i++) {
   const runs = [];
   for (let r = 0; r < BR; r++) runs.push(await p.evaluate(i => {
     const g = window.__game; window.__arena(true); const e = g.spawnFinal(i, 0); g.cutIn = null;

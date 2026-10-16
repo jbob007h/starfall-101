@@ -16,6 +16,7 @@ export const PILOT_BIOS: Record<string, string[]> = {
   "VESPER": ["VETERAN SNIPER.", "ONE EYE.", "ONE SHOT."],
   "JINX": ["STREET RACER.", "NEVER LOST A HEAT.", "BORED OF WINNING."],
   "CINDER": ["PYRO ACE. WALKED", "OUT OF A REACTOR", "FIRE. STILL BURNS."],
+  "VULCAN": ["MAGMA-BLOODED BRUTE", "FROM A DYING SUN.", "MELTS WHAT HE HITS."],
 };
 export const PILOT_NAMES = PILOT_IMAGES.map(p => p.name);
 export const PILOT_COUNT = PILOT_NAMES.length;

@@ -1,4 +1,4 @@
-// Screenshots: the three special weapons in action, the 14 final bosses (contact sheet), a duel cut-in. Needs :8080.
+// Screenshots: the three special weapons in action, the 15 final bosses (contact sheet), a duel cut-in. Needs :8080.
 import { chromium } from "playwright"; import fs from "fs";
 fs.mkdirSync("/workspace/shots", { recursive: true });
 const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1280, height: 720 } }); const errs = [];
@@ -16,9 +16,9 @@ for (const [k, pilot, nm] of [[0, 4, "lightning"], [1, 13, "inferno"], [2, 0, "b
   await p.screenshot({ path: `/workspace/shots/special_${nm}.png`, clip: { x: 368, y: 8, width: 544, height: 648 } });
 }
 console.log("specials [kind, kills, t]", JSON.stringify(out));
-// 14 bosses -> contact sheet (render each in the field, crop)
+// 15 bosses -> contact sheet (render each in the field, crop)
 const tiles = [];
-for (let i = 0; i < 14; i++) {
+for (let i = 0; i < 15; i++) {
   await arena();
   await p.evaluate(i => { const g = window.__game; g.px = 136; g.py = 290; const e = g.spawnFinal(i, 1); g.cutIn = null; g.popups = []; for (let n = 0; n < 60 * 5; n++) g.update(1 / 60); g.popups = []; }, i);
   await p.waitForTimeout(250);
@@ -33,5 +33,12 @@ await p.evaluate(() => { const g = window.__game; g.rivals.forEach((r, i) => { i
 await p.waitForTimeout(300);
 console.log("duel:", JSON.stringify(await p.evaluate(() => { const g = window.__game, e = g.enemies.find(x => x.fb); return { duel: g.duel, boss: e ? g.bossName(e) : null, cut: g.cutIn?.sub ?? null }; })));
 await p.screenshot({ path: "/workspace/shots/duel_cutin.png", clip: { x: 368, y: 8, width: 544, height: 648 } });
+// character select: 4x4 grid (15 pilots + RANDOM), VULCAN highlighted
+const p2 = await b.newPage({ viewport: { width: 1280, height: 720 } }); p2.on("pageerror", e => errs.push(String(e)));
+await p2.goto("http://localhost:8080/?offline"); await p2.waitForTimeout(800);
+await p2.evaluate(() => { const g = window.__game; g.openPilot("title"); g.pilotSel = 14; });
+for (const k of ["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]) { await p2.keyboard.press(k); await p2.waitForTimeout(80); } // round trip back to 14
+console.log("select:", JSON.stringify(await p2.evaluate(() => ({ sel: window.__game.pilotSel, state: window.__game.state }))));
+await p2.waitForTimeout(300); await p2.screenshot({ path: "/workspace/shots/select_4x4.png" });
 console.log("errors:", errs.length ? errs.join(" | ") : "none");
 await b.close();

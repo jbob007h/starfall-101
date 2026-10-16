@@ -4,6 +4,7 @@
 // The three shorter tracks have 3 sections each. In the game a section loops until the director cues another one.
 import type { FMPatch, StingerDef, TrackDef } from "./engine";
 import { VELOCITY } from "./songs_velocity";
+import { TITLE_THEME } from "./songs_title";
 
 export const PATCHES: Record<string, FMPatch> = {
   brass:   { ratio: 1, index: 3.2, indexSus: 1.6, indexDecay: 0.15, ratio2: 2, index2: 0.5, a: 0.01, d: 0.35, s: 0.72, r: 0.12, vol: 0.55, vib: { depth: 16, rate: 5.6, delay: 0.22 } },
@@ -195,6 +196,7 @@ export const TRACKS: TrackDef[] = [
     ],
   },
   VELOCITY,
+  TITLE_THEME, // title / menu theme (not a soundtrack plan)
 ];
 
 /** Stingers (engine.stinger(name)). "chord" notes walk the current chord: 0 root, 1 third, 2 fifth, 3 octave, ...

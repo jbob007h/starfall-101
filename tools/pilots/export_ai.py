@@ -9,7 +9,7 @@ ALIAS = {"ZORUK": "KRAG", "VESPER": "WIDOW"}  # raw files keep their original na
 # id order (0-13) and horizontal head centre as a fraction of the image width
 ORDER = [("KAGE", 0.40), ("VOSS", 0.48), ("SABLE", 0.38), ("IRONCLAD", 0.50), ("HEX", 0.40), ("ZORUK", 0.50), ("WRAITH", 0.50),
          ("FANG", 0.45), ("MARISOL", 0.44), ("BRICK", 0.50), ("TALON", 0.47), ("VESPER", 0.50), ("JINX", 0.40),
-         ("CINDER", 0.50)]
+         ("CINDER", 0.50), ("VULCAN", 0.50)]
 
 
 def crop(im, cx):

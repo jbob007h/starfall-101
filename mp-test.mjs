@@ -78,7 +78,7 @@ const s4 = await specInfo(pages[0]); console.log("no humans left:", JSON.stringi
 await pages[0].screenshot({ path: "spectate_end.png" });
 // ---- online: ALPHA returns to the title from the end screen, then BRAVO+ALPHA play a new match
 await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(300);
-ok(await ev(pages[0], () => [window.__game.state, window.__game.spec, window.__audio.playing].join()) === "title,-1,false", "ALPHA: Esc on end screen -> title, spectating stopped, music stopped");
+ok(await ev(pages[0], () => [window.__game.state, window.__game.spec, window.__audio.titleOn].join()) === "title,-1,true", "ALPHA: Esc on end screen -> title, spectating stopped, match music replaced by the title theme");
 await ev(pages[1], () => { window.__game.quitToTitle(); });
 for (const p of [pages[0], pages[1]]) { await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(200); await p.keyboard.press("Enter"); await p.waitForTimeout(400); }
 const lb = await Promise.all([0, 1].map(i => ev(pages[i], () => [window.__game.state, window.__game.lobbyHumans])));

@@ -144,9 +144,22 @@ export class Audio {
     try { localStorage.setItem(LS_ST, String(i)); } catch { /* private mode */ }
     this.soundtrack = i; this.director?.setPlan(i);
   }
-  /** Start the match music (restarts it if the spectate / ending music is still playing). */
-  startMusic() { if (!this.director || (this.music?.playing && this.director.mode === "play")) return; this.director.start({ ...this.gs, lowHealth: this.lowHealth, duel: this.duel }); }
-  stopMusic() { this.music?.stop(); }
+  /** Title / menu theme (STARFALL CALLING). Call every frame on menu screens: no-op while it is already playing. */
+  titleOn = false;
+  titleMusic() {
+    const m = this.music; if (!m || !this.director || this.director.mode !== "idle" || (this.titleOn && m.playing)) return; // never cut over match / spectate / ending music (stopMusic resets the mode)
+    if (this.ctx && this.ctx.state !== "running") return; // autoplay: wait for the first input to unlock audio
+    this.titleOn = true; this.director.mode = "idle";
+    m.setLoopMode("section"); m.setDrumMode("normal"); m.setBuild(0); m.setTempoOffset(0); m.resetChannels(0); m.setFilter(null, 0);
+    m.play("title", { section: "1", transpose: 0 });
+  }
+  /** Start the match music (restarts it if the spectate / ending music is still playing); the title theme fades out under it. */
+  startMusic() {
+    if (!this.director || (this.music?.playing && this.director.mode === "play")) return;
+    if (this.titleOn) { this.titleOn = false; this.music?.stop(0.9); }
+    this.director.start({ ...this.gs, lowHealth: this.lowHealth, duel: this.duel });
+  }
+  stopMusic() { this.titleOn = false; this.music?.stop(); if (this.director) this.director.mode = "idle"; }
   /** Pause / resume the music in place (game pause). */
   pauseMusic(p: boolean) { this.music?.setPaused(p); }
   /** Danger pulse from the director: heartbeat (lub-dub) on 1, 1+3 or every beat, PSG ticks on the off-beats at critical. */

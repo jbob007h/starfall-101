@@ -165,13 +165,27 @@ export const FINAL_BOSSES: FBDef[] = [
       (h, x, y, S) => { ring(h, x, y, 18, bsp(h) * 0.75, O, S.t); shot(h, x, y, aim(h, x, y), bsp(h) * 1.2, Y); return 1.0; },
       (h, x, y) => { h.eb.push({ x: rnd(0, PW), y: -4, vx: rnd(-15, 15), vy: bsp(h) * rnd(0.6, 0.9), r: 2, col: O }); if (Math.random() < 0.25) fan(h, x, y, aim(h, x, y), 3, bsp(h) * 1.1, 0.2, Y); return 0.07; },
     ] },
+  { // 14 VULCAN: magma colossus; crater eruptions, warned meteor rocks, sweeping lava flows
+    name: "MAGMA COLOSSUS", pal: ["#2a0c06", "#4a1c10", "#ff6020", Y], w: 50, h: 34, hp: 1.11, rate: 1.32, spd: 1.3, hit: { rx: 19, ry: 13 },
+    shape: (u, v) => inE(u, v, 0, 0.16, 0.26, 0.16) ? ((u > 0.08 && u < 0.18 && v > 0.12 && v < 0.2) ? 3 : 1)
+      : inE(u, v, 0, 0.62, 0.22, 0.14) ? 3
+      : (v > 0.28 && v < 0.98 && u < 0.5 + (v - 0.28) * 0.55) ? ((Math.abs(Math.sin(u * 13 + v * 9)) < 0.22 || Math.abs(Math.sin(u * 7 - v * 15)) < 0.12) ? 2 : 1)
+      : (v > 0.3 && v < 0.82 && u > 0.8 && u < 0.98) ? (v > 0.7 ? 2 : 1) : 0,
+    move: hover(PW / 2, 46, 56, 0.35),
+    attacks: [
+      (h, x, y, S) => { ring(h, x, y - 6, 14, bsp(h) * 0.8, "#ff6020", S.t * 0.9); later(S, 0.25, () => ring(h, x, y - 6, 14, bsp(h) * 0.65, Y, S.t * 0.9 + 0.22)); return 1.1; },
+      (h, x, y, S) => { const tx = Math.max(8, Math.min(PW - 8, h.px + rnd(-30, 30))); tele(S, tx, 0, tx, 340, 0.8, "#ff6020");
+        later(S, 0.8, () => { const r = shot(h, tx, -6, Math.PI / 2, bsp(h) * 2.4, "#ff6020", 4.5); later(S, 0.55, () => { if (r.y < 330) { ring(h, r.x, r.y, 7, bsp(h) * 0.7, Y, rnd(0, 1)); r.y = 999; } }); });
+        fan(h, x, y, aim(h, x, y), 3, bsp(h) * 1.1, 0.18, Y); return 0.75; },
+      (h, x, y, S) => { const a = Math.PI / 2 + Math.sin(S.t * 1.6) * 1.0; shot(h, x - 12, y + 10, a, bsp(h) * 0.85, "#ff6020", 3); shot(h, x + 12, y + 10, Math.PI - a, bsp(h) * 0.85, O, 3); return 0.11; },
+    ] },
 ];
 
 export function newFBState(): FBState {
   return { t: 0, cd: 1.5, ph: 0, q: [], tele: [], clones: [], open: false, vis: 1, lpx: 0, lpy: 0, pvx: 0, pvy: 0, ax: PW / 2, ay: 60, bx: PW / 2, by: 60, moveT: 0, side: 1 };
 }
 /** Tunable global rate (tests / balancing). */
-export const FB_TUNE = { rate: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] };
+export const FB_TUNE = { rate: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] };
 /** Advance one boss: returns its position. hpFrac drives the enrage (+25% fire rate under half HP). */
 export function stepFinal(def: FBDef, idx: number, S: FBState, h: FBHost, dt: number, hpFrac: number) {
   S.t += dt; const t = S.t; SPD = def.spd ?? 1;
