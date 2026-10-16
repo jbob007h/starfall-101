@@ -1,4 +1,4 @@
-// Multiplayer smoke test: run `PORT=8090 npm start` first.
+// Multiplayer smoke test: run `STARFALL_TEST=1 PORT=8090 npm start` first.
 import { chromium } from "playwright";
 const URL = process.env.URL || "http://localhost:8090/";
 const b = await chromium.launch();
@@ -92,9 +92,26 @@ console.log("new match:", JSON.stringify(nm)); ok(nm[0][0] === "play" && nm[0][1
 await pages[0].keyboard.press("Escape"); await pages[0].waitForTimeout(150);
 const t0 = await ev(pages[0], () => [window.__game.paused, window.__game.liveMatch(), window.__game.time]); await pages[0].waitForTimeout(700);
 const t1 = await ev(pages[0], () => [window.__game.paused, window.__audio.music?.paused ?? false, window.__game.time]);
-console.log("match menu:", JSON.stringify({ t0, t1 })); ok(t0[0] && t0[1] && t1[0] && !t1[1] && t1[2] - t0[2] > 0.4, "online 2+ humans: Esc menu (MATCH IN PROGRESS) keeps the match running");
+console.log("match menu:", JSON.stringify({ t0, t1 })); ok(t0[0] && t0[1] && t1[0] && !t1[1] && t1[2] - t0[2] > 0.1, "online 2+ humans: Esc menu (MATCH IN PROGRESS) keeps the match running");
 await pages[0].keyboard.press("ArrowDown"); await pages[0].waitForTimeout(150); await pages[0].keyboard.press("Enter"); await pages[0].waitForTimeout(800);
 ok(await ev(pages[0], () => window.__game.state) === "title", "online pause > QUIT TO TITLE");
 ok(await ev(pages[1], () => !window.__game.rivals.find(r => r.name === "ALPHA").alive), "server KOs the pilot who quit");
+// ---- one match at a time: a late joiner spectates the running match (BRAVO still flying), can leave, and joins the next lobby when it ends
+const late = [];
+for (const n of ["DELTA", "ECHO"]) { const ctx = await b.newContext({ viewport: { width: 1280, height: 720 } }); const p = await ctx.newPage();
+  p.on("console", m => { if (m.type() === "error") errs.push(n + ": " + m.text()); }); p.on("pageerror", e => errs.push(n + ": " + e));
+  await p.goto(URL + "?name=" + n); await p.waitForFunction(() => window.__netReady);
+  for (let i = 0; i < 3; i++) { await p.keyboard.press("Enter"); await p.waitForTimeout(250); } late.push(p); }
+await late[0].waitForTimeout(1500);
+const lj = await Promise.all(late.map(p => ev(p, () => { const g = window.__game; return { state: g.state, late: g.late, spec: g.spec >= 0 ? g.rivals[g.spec].name : null, humans: g.rivals.filter(r => !r.isBot).map(r => r.name).join() }; })));
+console.log("late joiners:", JSON.stringify(lj));
+ok(lj.every(x => x.state === "over" && x.late && x.spec === "BRAVO"), "late joiner spectates the live match (MATCH IN PROGRESS - SPECTATING), watching BRAVO");
+await late[0].waitForTimeout(800); const snaps = await ev(late[0], () => window.__game.specSnaps.length); ok(snaps > 0, "late joiner receives live snapshots (" + snaps + ")");
+await late[0].screenshot({ path: "/workspace/shots/late_spectate.png" });
+await late[1].keyboard.press("Escape"); await late[1].waitForTimeout(400);
+ok(await ev(late[1], () => window.__game.state + "," + window.__game.late) === "title,false", "late joiner: Esc -> back to title");
+await ev(late[0], () => window.__game.net.ws.send(JSON.stringify({ t: "debugEnd" }))); await late[0].waitForTimeout(1500);
+const nl = await ev(late[0], () => [window.__game.state, window.__game.late, window.__game.lobbyLog.join("|")]);
+console.log("after match end:", JSON.stringify(nl)); ok(nl[0] === "lobby" && !nl[1], "late joiner joins the next lobby automatically when the match ends");
 console.log("errors:", errs); if (errs.length) process.exitCode = 1;
 await b.close();

@@ -3,7 +3,7 @@ import { Audio, renderMusicPreview, TRACKS } from "./audio";
 import { DUEL_HP } from "./sim";
 import { FINAL_BOSSES, FINAL_HP, FBState, FB_TUNE, newFBState, stepFinal, finalSprite } from "./finalboss";
 import { fxCfg, saveFx, STAGE_PAL, STAGE_TINT, STAGE_HUE, nebulaTile, fortressTile, coreTile, scrollTile, cycleRect, cometRect, bloom, rasterWave, presentCRT } from "./fx";
-import { LocalSimTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, chooseTransport, Snap } from "./net";
+import { LocalSimTransport, WebSocketTransport, Transport, NetEvent, PlayerInfo, MAX_PLAYERS, Snap, serverUrl, probeServer } from "./net";
 import { PILOT_NAMES, PILOT_BIOS, PILOT_COUNT, RANDOM_PILOT, loadPilotChoice, savePilotChoice, resolvePilot, pilotForName, validPilot, drawPilot } from "./pilots";
 import { ACTIONS, Act, Dev, binds, bind, clearBind, resetBinds, codeName, actName, actDown, actHit, actVal, keys, pressed, typed, pad, pollPadState, RESERVED } from "./input";
 import { makeSprite, drawSprite, SHIP, SAUCER, BUG, SAUCER_UP1, SAUCER_UP2, BUG_UP1, BUG_UP2, BOSS, BADGE, SERP_HEAD, SERP_SEG } from "./sprites";
@@ -15,6 +15,7 @@ const PX = 184, PY = 4, PW = 272, PH = 324; const BY = PY + PH + 3; // bottom HU
 const COLORS = ["#ff3cc8", "#3cf0ff", "#ffe040", "#60ff80"];
 const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
 const SENT = 4; const SENT_COL = "#ff5050";
+const LS_MODE = "sf101mode";
 const MENU_STATES: string[] = ["title", "name", "pilot", "controls", "lobby"];
 const PILOT_COLS = 4; // pilot-select grid columns (15 pilots + RANDOM = 4x4)
 const MAG = "#ff3cc8", CYA = "#3cf0ff", YEL = "#ffe040", WHT = "#ffffff", DIM = "#2a1440";
@@ -271,11 +272,12 @@ class Game {
   koName(k: number) { return k === -1 ? this.name : k >= 0 ? this.rivals[k]?.name ?? "?" : "STARFALL"; }
   renderLeaderboard(win: boolean) {
     const x = PX, y = PY, w = PW, h = PH; ctx.fillStyle = "#06020e"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, win ? YEL : MAG);
-    drawText(ctx, win ? "VICTORY! #1 OF 101" : "GAME OVER  #" + this.place + " / 101", x + w / 2, y + 6, win ? YEL : MAG, 2, "center", "#000");
-    drawText(ctx, "SCORE " + this.score + "  YOUR KOS " + this.myKos + "  BEST CHAIN " + this.bestChain, x + w / 2, y + 24, WHT, 1, "center");
+    if (this.late) drawText(ctx, "MATCH IN PROGRESS - SPECTATING", x + w / 2, y + 6, SENT_COL, 1, "center", "#000"), drawText(ctx, "YOU JOIN THE NEXT LOBBY WHEN IT ENDS", x + w / 2, y + 16, CYA, 1, "center");
+    else drawText(ctx, win ? "VICTORY! #1 OF 101" : "GAME OVER  #" + this.place + " / 101", x + w / 2, y + 6, win ? YEL : MAG, 2, "center", "#000");
+    if (!this.late) drawText(ctx, "SCORE " + this.score + "  YOUR KOS " + this.myKos + "  BEST CHAIN " + this.bestChain, x + w / 2, y + 24, WHT, 1, "center");
     type Row = { place: number; name: string; tag: string; by: string; mine: boolean; me: boolean };
     const rows: Row[] = this.rivals.map(r => ({ place: r.alive ? 0 : r.place, name: r.name, tag: r.isBot ? "CPU" : "HUM", by: r.alive ? "STILL FLYING" : r.place === 1 ? "WINNER" : "KO BY " + this.koName(r.koBy), mine: !r.alive && r.koBy === -1, me: false }));
-    rows.push({ place: win ? 1 : this.place, name: this.name, tag: "YOU", by: win ? "WINNER" : "KO BY " + this.koName(this.myKoBy), mine: false, me: true });
+    if (!this.late) rows.push({ place: win ? 1 : this.place, name: this.name, tag: "YOU", by: win ? "WINNER" : "KO BY " + this.koName(this.myKoBy), mine: false, me: true });
     rows.sort((a, b) => (a.place || 0) - (b.place || 0));
     const top = y + 36;
     drawText(ctx, "#    PILOT", x + 6, top, "#8070b0", 1); drawText(ctx, "KO'D BY", x + 150, top, "#8070b0", 1);
@@ -298,10 +300,11 @@ class Game {
   endSel = 0; pauseSel = 0;
   /** Leave the current lobby/match/spectating session and go back to the title screen (music reset, ready for a new match). */
   quitToTitle() {
+    this.late = false;
     this.stopSpectate(); this.watched = false; this.net.leaveLobby();
     this.paused = false; this.dead = false; this.duel = false; this.endSel = 0; this.pauseSel = 0; this.titleSel = 0; this.lobbyVoted = false; this.lobbyCd = -1; this.cutIn = null;
     audio.stopMusic(); audio.setRemaining(101, false); keys.clear();
-    this.state = "title"; this.titleT = 0; audio.tone(330, 0.04, "square", 0.06);
+    this.state = "title"; this.titleT = 0; audio.tone(330, 0.04, "square", 0.06); this.applyPlayMode();
   }
   /** NEW MATCH / TITLE SCREEN selector drawn on all post-match screens. */
   renderEndMenu(x: number, y: number, w: number) {
@@ -317,7 +320,11 @@ class Game {
       case "lobbyJoin": this.lobbyCount = e.count; if (!e.player.isBot) { this.lobbyHumans++; this.lobbyLog.push((e.player.id === this.net.localId ? e.player.name + " (YOU)" : e.player.name) + " JOINED"); } break;
       case "lobbyLeave": this.lobbyCount = e.count; this.lobbyHumans--; this.lobbyLog.push(e.name + " LEFT"); break;
       case "lobbyCountdown": this.lobbyCd = e.seconds; this.lobbyHumans = e.humans; break;
-      case "matchStart": this.reset(e.players); break;
+      case "matchStart": this.late = false; this.reset(e.players); break;
+      case "lateJoin": { // ONE match at a time: it is running, so watch it (live humans) and join the next lobby when it ends
+        this.reset(e.players); this.late = true; this.dead = true; this.state = "over"; this.endT = this.realT - 2; this.place = 0; this.lbScroll = 0;
+        for (const p of e.players) { const r = this.rivals[p.id]; if (r && !p.alive) { r.alive = false; r.hp = 0; r.place = p.place; r.koT = 0; } }
+        this.startSpectate(); break; }
       case "state": if (this.state !== "play") break; for (const st of e.states) { const r = this.rivals[st.id]; if (r && r.alive) { r.hp = st.hp; r.badges = st.badges; r.target = st.target === this.net.localId ? -1 : -2; } } break;
       case "hit": { const r = this.rivals[e.id]; if (r) { r.flash = 0.4; } break; }
       case "ko": { const r = this.rivals[e.id]; if (!r || !r.alive) break; const by = e.by === this.net.localId ? -1 : e.by;
@@ -332,7 +339,7 @@ class Game {
       }
       case "snap": if (e.id === this.spec) this.addSnap(e.snap); break;
       case "watch": this.watched = e.on; this.snapT = 0; break;
-      case "matchEnd": this.stopSpectate(); if (e.winner === this.net.localId && !this.dead && this.state === "play") { for (const r of this.rivals) r.alive = false; } break; // win resolves in updateRivals
+      case "matchEnd": if (this.late) { this.late = false; this.stopSpectate(); this.startLobby(); break; } this.stopSpectate(); if (e.winner === this.net.localId && !this.dead && this.state === "play") { for (const r of this.rivals) r.alive = false; } break; // win resolves in updateRivals
       case "disconnected":
         this.spec = -1; this.specSnaps = []; this.watched = false; this.netMsg = "OFFLINE: " + e.reason; const was = this.state; this.setNet(new LocalSimTransport());
         if (was === "lobby") this.startLobby(); else if (was === "play" && !this.dead) { this.gameOver(); } break;
@@ -378,12 +385,13 @@ class Game {
       if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
       if (this.state === "lobby") { this.tickLobby(dt); if (hit("Escape", "PadB")) { this.quitToTitle(); return; } if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
       if (this.state === "title") {
-        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 3) % 4; audio.tone(520, 0.04, "square", 0.05); }
-        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 4; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 4) % 5; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 5; audio.tone(520, 0.04, "square", 0.05); }
         const lr = (hit("ArrowRight", "KeyD", "PadRight") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") ? 1 : 0);
         if (this.titleSel === 1 && lr) { const n = PILOT_COUNT + 1, cur = this.pilotChoice === RANDOM_PILOT ? PILOT_COUNT : this.pilotChoice, nx = (cur + lr + n) % n;
           this.pilotChoice = nx === PILOT_COUNT ? RANDOM_PILOT : nx; savePilotChoice(this.pilotChoice); audio.init(); audio.tone(780, 0.05, "square", 0.06); }
         else if (actHit("song") || (this.titleSel === 3 && lr)) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); }
+        else if (this.titleSel === 4 && (lr || hit("Enter", "Space", "KeyZ", "PadStart", "PadA"))) { audio.init(); this.setPlayMode(this.playMode === "online" ? "offline" : "online"); audio.tone(780, 0.05, "square", 0.06); }
         else if (hit("KeyC", "PadY")) this.openControls();
         else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 3) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel === 2) this.openControls(); else if (this.titleSel === 1) this.openPilot("title"); else this.openName(); }
       }
@@ -967,7 +975,26 @@ class Game {
 
   // ---------- lobby tick (also runs behind the CONTROLS screen) ----------
   tickLobby(dt: number) { this.net.tick(dt, this.hints()); if (this.lobbyCd > 0) this.lobbyCd -= dt; }
-  titleSel = 0;
+  titleSel = 0; late = false;
+  /** OFFLINE = local match vs bots (no server); ONLINE = the game server. Saved; default ONLINE when a server is reachable. */
+  playMode: "online" | "offline" = "offline"; srvUrl: string | null = null; srvOk: boolean | null = null; probing = false;
+  modeLabel() { return this.playMode === "offline" ? "OFFLINE (VS BOTS)" : this.probing ? "ONLINE (CONNECTING...)" : this.srvOk ? "ONLINE" : this.srvUrl ? "ONLINE (NO SERVER)" : "ONLINE (UNAVAILABLE)"; }
+  async initPlayMode() {
+    this.srvUrl = serverUrl(); let saved: string | null = null; try { saved = localStorage.getItem(LS_MODE); } catch { /* */ }
+    if (this.srvUrl) { this.probing = true; this.srvOk = await probeServer(this.srvUrl); this.probing = false; } else this.srvOk = false;
+    this.playMode = new URLSearchParams(location.search).has("offline") ? "offline" : saved === "online" || saved === "offline" ? saved : this.srvOk ? "online" : "offline";
+    this.applyPlayMode();
+  }
+  setPlayMode(m: "online" | "offline") {
+    this.playMode = m; try { localStorage.setItem(LS_MODE, m); } catch { /* */ } this.netMsg = "";
+    if (m === "online" && !this.srvOk && this.srvUrl && !this.probing) { this.probing = true; probeServer(this.srvUrl).then(ok => { this.probing = false; this.srvOk = ok; this.applyPlayMode(); }); }
+    this.applyPlayMode();
+  }
+  applyPlayMode() {
+    if (this.state !== "title") return;
+    const want = this.playMode === "online" && this.srvOk && this.srvUrl;
+    if (want && !this.net.online) this.setNet(new WebSocketTransport(this.srvUrl!)); else if (!want && this.net.online) this.setNet(new LocalSimTransport());
+  }
 
   // ---------- spectator mode (online): watch live humans after you are out ----------
   spec = -1; specLb = false; specSnaps: { t: number; s: Snap }[] = []; specParts: Part[] = []; specCount = 0; specMsg = ""; specMsgT = 0;
@@ -1045,6 +1072,7 @@ class Game {
     if (Math.floor(this.realT * 2) % 2) { ctx.fillStyle = SENT_COL; ctx.fillRect(x + 4, y + 4, 4, 4); }
     drawText(ctx, "LIVE", x + 11, y + 4, SENT_COL, 1);
     drawText(ctx, "SPECTATING " + r.name, x + w / 2, y + 3, YEL, 2, "center", "#000");
+    if (this.late) { ctx.fillStyle = "rgba(6,2,14,0.86)"; ctx.fillRect(x, y - 15, w, 13); drawText(ctx, "MATCH IN PROGRESS - SPECTATING", x + w / 2, y - 12, SENT_COL, 1, "center"); }
     if (n > 1) drawText(ctx, i + "/" + n, x + w - 5, y + 4, CYA, 1, "right");
     const hint = pad.connected ? "< LB / RB > SWITCH PILOT   Y LEADERBOARD" : "< LEFT / RIGHT > SWITCH PILOT   L LEADERBOARD";
     drawText(ctx, hint, x + w / 2, y + 20, "#b080ff", 1, "center");
@@ -1245,9 +1273,10 @@ class Game {
     drawText(ctx, "101", W / 2, 130 + bob, CYA, 8, "center", "#003040");
     drawText(ctx, "101-PLAYER LAST PILOT STANDING BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
-    drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PILOT " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 274, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
-    ["LAUNCH", "PILOT", "CONTROLS", "MUSIC"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
+    drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PLAYER " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 286, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
+    ["LAUNCH", "PILOT", "CONTROLS", "MUSIC", "PLAY"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
       const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : i === 1 ? "PILOT: < " + (this.pilotChoice === RANDOM_PILOT ? "RANDOM" : PILOT_NAMES[this.pilotChoice]) + " >"
+        : i === 4 ? "PLAY: < " + this.modeLabel() + " >"
         : i === 2 ? "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")" : "MUSIC: < " + audio.soundtrackName + " >" + (pad.connected ? "" : "  (" + kn("song") + ")");
       drawText(ctx, (on ? "> " : "  ") + lab + (on ? " <" : "  "), W / 2, 228 + i * 11 + (i ? 3 : 0), on ? (blink ? WHT : YEL) : "#8070b0", i === 0 ? 2 : 1, "center"); });
     const mv = (d: Dev) => { const n = (["up", "down", "left", "right"] as Act[]).map(a => actName(d, a)); return n.every(q => q.startsWith("LS")) ? "L-STICK" : n.every(q => q.startsWith("D-")) ? "D-PAD" : n.join("/"); };
@@ -1256,7 +1285,7 @@ class Game {
       ] : ["MOVE: " + mv("key") + "   FIRE: HOLD " + kn("fire") + "   FOCUS: " + kn("focus") + "   BOMB: " + kn("bomb"),
       "TARGET: " + kn("tgt0") + " RANDOM  " + kn("tgt1") + " KOS  " + kn("tgt2") + " ATTACKERS  " + kn("tgt3") + " BADGES   " + kn("mute") + " MUTE  " + kn("pause") + " PAUSE  " + kn("crt") + " CRT",
       "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
-    help.forEach((l, i) => drawText(ctx, l, W / 2, 290 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
+    help.forEach((l, i) => drawText(ctx, l, W / 2, 300 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
 
   renderPanels() {
@@ -1518,7 +1547,7 @@ const game = new Game(); game.bindNet(); (window as any).__game = game; (window 
 onPad = c => { game.padMsg = c ? "CONTROLLER CONNECTED" : "CONTROLLER DISCONNECTED"; game.padMsgT = 2.5; if (c && game.state === "play") game.popup("CONTROLLER CONNECTED", PW / 2, 50, "#60ff80", 1); };
 // browser autoplay rules: unlock audio on the first key / click / tap on a menu screen so the title theme can start
 for (const ev of ["keydown", "pointerdown"]) addEventListener(ev, () => { if (MENU_STATES.includes(game.state) && audio.ctx?.state !== "running") audio.init(); });
-chooseTransport().then(t => { if (game.state === "title") game.setNet(t); (window as any).__netReady = true; });
+game.initPlayMode().then(() => { (window as any).__netReady = true; });
 let last = performance.now(), acc = 0; const STEP = 1 / 60; const perf = { t: 0, n: 0 };
 function loop(now: number) {
   const fdt = (now - last) / 1000; acc += Math.min(0.1, fdt); last = now;

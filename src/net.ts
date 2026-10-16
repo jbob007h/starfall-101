@@ -17,6 +17,7 @@ export type NetEvent =
   | { type: "lobbyLeave"; id: number; name: string; count: number }
   | { type: "lobbyCountdown"; seconds: number; humans: number }
   | { type: "matchStart"; players: PlayerInfo[]; seed: number }
+  | { type: "lateJoin"; players: (PlayerInfo & { alive: boolean; place: number })[] } // a match is already running: spectate it
   | { type: "attack"; from: number; to: number; tier: Tier; power: number; variant: number }
   | { type: "state"; states: PlayerState[] }
   | { type: "hit"; id: number; from: number }
@@ -167,6 +168,8 @@ export class WebSocketTransport implements Transport {
       case "hit": if (m.id !== this.map.me) this.emit({ type: "hit", id: L(m.id), from: L(m.from) }); break;
       case "ko": if (m.id !== this.map.me) this.emit({ type: "ko", id: L(m.id), by: L(m.by), place: m.place, badges: m.badges }); break;
       case "matchEnd": this.emit({ type: "matchEnd", winner: L(m.winner) }); break;
+      case "lateJoin": this.map = new SlotMap(m.you);
+        this.emit({ type: "lateJoin", players: (m.players as any[]).filter(p => p.id !== m.you).map(p => ({ id: L(p.id), name: p.name, isBot: p.isBot, avatar: typeof p.avatar === "number" ? p.avatar : undefined, alive: !!p.alive, place: p.place | 0 })).sort((a, b) => a.id - b.id) }); break;
       case "watch": this.emit({ type: "watch", on: !!m.on }); break;
       case "snap": { if (m.id === this.map.me || !Array.isArray(m.p)) break;
         const e = (Array.isArray(m.e) ? m.e : []).map((q: number[]) => { if (q[3] < 0) { q = q.slice(); q[6] = L(q[6]); } return q; });
@@ -190,6 +193,24 @@ export class WebSocketTransport implements Transport {
   tick() { /* event-driven */ }
 }
 
+/** Public game server (used by the single-file build when opened from disk). */
+export const DEFAULT_SERVER = "wss://starfall-101.onrender.com/ws";
+/** Where ONLINE play would connect: ?server=..., the page's own server (meta tag), the public server for file://; null with ?offline. */
+export function serverUrl(): string | null {
+  const q = new URLSearchParams(location.search);
+  if (q.has("offline")) return null;
+  const s = q.get("server"); if (s) return s;
+  if (document.querySelector('meta[name="starfall-online"]')) return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+  return location.protocol === "file:" ? DEFAULT_SERVER : null;
+}
+/** Is the server reachable? (opens a WebSocket and waits for the welcome message) */
+export function probeServer(url: string, ms = 4000): Promise<boolean> {
+  return new Promise(res => {
+    let done = false; const fin = (v: boolean) => { if (done) return; done = true; try { ws.close(); } catch { /* */ } res(v); };
+    let ws: WebSocket; try { ws = new WebSocket(url); } catch { res(false); return; }
+    ws.onmessage = () => fin(true); ws.onerror = () => fin(false); ws.onclose = () => fin(false); setTimeout(() => fin(false), ms);
+  });
+}
 /** Pick a transport: ?offline, ?server=wss://host/ws, the page's own server (meta tag), else offline. */
 export async function chooseTransport(): Promise<Transport> {
   const q = new URLSearchParams(location.search);

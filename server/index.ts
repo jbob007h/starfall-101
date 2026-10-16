@@ -13,7 +13,7 @@ const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".j
 
 const server = http.createServer((req, res) => {
   const url = (req.url || "/").split("?")[0];
-  if (url === "/healthz") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify({ starfall: 1, lobby: lobby.members.size, matches: matches.size })); return; }
+  if (url === "/healthz") { res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*" }); res.end(JSON.stringify({ starfall: 1, lobby: lobby.members.size, matches: matches.size, live: !!liveMatch() })); return; }
   let f = path.normalize(path.join(DIST, url === "/" ? "index.html" : url));
   if (!f.startsWith(DIST)) { res.writeHead(403); res.end(); return; }
   fs.readFile(f, (err, data) => {
@@ -27,7 +27,8 @@ const server = http.createServer((req, res) => {
 const PILOT_COUNT = 15;
 interface Client { ws: WebSocket; conn: number; name: string; avatar?: number; match: Match | null; slot: number; ready: boolean; alive: boolean; }
 interface Match { id: number; sim: MatchSim; clients: Map<number, Client>; /* slot -> client */ stateT: number;
-  watchers: Map<Client, number>; /* spectator -> watched slot */ watched: Set<number>; /* slots told to stream snapshots */ }
+  watchers: Map<Client, number>; /* spectator -> watched slot */ watched: Set<number>; /* slots told to stream snapshots */
+  late: Set<Client>; /* joined while this match was running: spectators only */ over: boolean; players: { id: number; name: string; isBot: boolean; avatar?: number }[]; hidden: number; }
 let nextConn = 1, nextMatch = 1;
 const lobby = { members: new Map<number, Client>(), firstJoin: 0, lastCd: -1 };
 const matches = new Map<number, Match>();
@@ -54,11 +55,20 @@ function relaySnap(m: Match, c: Client, d: any) {
 }
 function leaveCurrent(c: Client) {
   if (lobby.members.delete(c.conn)) lobbyBroadcast({ t: "lobbyLeave", id: c.conn, name: c.name, count: lobby.members.size });
-  if (c.match) { const m = c.match; if (c.alive) m.sim.humanKO(c.slot, -2); setWatch(m, c, -1); m.clients.delete(c.slot); c.match = null; c.alive = false; }
+  if (c.match) { const m = c.match; if (c.alive) m.sim.humanKO(c.slot, -2); setWatch(m, c, -1); if (m.clients.get(c.slot) === c) m.clients.delete(c.slot); m.late.delete(c); c.match = null; c.alive = false; c.slot = -1; }
 }
+/** The one match that may run at a time (ended matches linger ~1 s and do not count). */
+const liveMatch = () => [...matches.values()].find(m => !m.over);
 function joinLobby(c: Client, name: string, avatar?: unknown) {
   leaveCurrent(c); c.name = clean(name); c.ready = false;
   c.avatar = Number.isInteger(avatar) && (avatar as number) >= 0 && (avatar as number) < PILOT_COUNT ? avatar as number : undefined; // pilot portrait index (0..14)
+  const live = liveMatch();
+  if (live) { // ONE match at a time: a late joiner spectates the running match and is sent to the next lobby when it ends
+    c.match = live; c.slot = -1; c.alive = false; live.late.add(c);
+    const st = new Map(live.sim.slots.map(s => [s.id, s]));
+    send(c, { t: "lateJoin", you: live.hidden, players: live.players.map(p => { const s = st.get(p.id); return { ...p, alive: !!s?.alive, place: s?.place ?? 0 }; }) });
+    return;
+  }
   if (lobby.members.size === 0) lobby.firstJoin = Date.now();
   lobby.members.set(c.conn, c);
   for (const o of lobby.members.values()) send(c, { t: "lobbyJoin", id: o.conn, name: o.name, isBot: false, avatar: o.avatar, count: lobby.members.size });
@@ -70,15 +80,16 @@ function startMatch() {
   const players: { name: string; isBot: boolean; ai: boolean; c?: Client; avatar?: number }[] = humans.map(c => ({ name: c.name, isBot: false, ai: false, c, avatar: c.avatar }));
   const bn = botNames(MAX, humans.map(c => c.name)); let n = 0; while (players.length < MAX) players.push({ name: bn[n++], isBot: true, ai: true });
   for (let i = players.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [players[i], players[j]] = [players[j], players[i]]; }
-  const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim, watchers: new Map(), watched: new Set() };
-  const toAll = (o: object) => { for (const c of m.clients.values()) send(c, o); };
+  const m: Match = { id: nextMatch++, clients: new Map(), stateT: 0, sim: null as unknown as MatchSim, watchers: new Map(), watched: new Set(), late: new Set(), over: false, players: [], hidden: -1 };
+  const toAll = (o: object) => { for (const c of m.clients.values()) send(c, o); for (const c of m.late) send(c, o); };
   m.sim = new MatchSim(players, {
     attack: (from, to, tier, power, variant) => { const c = m.clients.get(to); if (c) send(c, { t: "attack", from, to, tier, power, variant }); },
     hit: (id, from) => toAll({ t: "hit", id, from }),
     ko: (id, by, place, badges) => { toAll({ t: "ko", id, by, place, badges }); const c = m.clients.get(id); if (c) c.alive = false; },
-    end: (winner) => { toAll({ t: "matchEnd", winner }); setTimeout(() => matches.delete(m.id), 1000); },
+    end: (winner) => { m.over = true; toAll({ t: "matchEnd", winner }); setTimeout(() => matches.delete(m.id), 1000); },
   });
   const list = players.map((p, i) => ({ id: i, name: p.name, isBot: p.isBot, avatar: p.avatar }));
+  m.players = list; m.hidden = Math.max(0, list.findIndex(p => p.isBot)); // late joiners have no slot: one bot is left off their 100-cell grid
   players.forEach((p, i) => { if (p.c) { p.c.match = m; p.c.slot = i; p.c.alive = true; m.clients.set(i, p.c); send(p.c, { t: "matchStart", you: i, players: list, seed: m.id }); } });
   matches.set(m.id, m);
   console.log(`match ${m.id} started: ${humans.length} humans + ${MAX - humans.length} bots`);
@@ -98,6 +109,7 @@ wss.on("connection", ws => {
       case "start": if (lobby.members.has(c.conn)) { c.ready = true; } break;
       case "attack": if (c.match && c.alive) { const tier = Math.max(0, Math.min(2, m.tier | 0)) as Tier; c.match.sim.humanAttack(c.slot, m.to | 0, tier, Math.max(0, Math.min(200, Number(m.power) || 0))); } break;
       case "state": if (c.match && c.alive) c.match.sim.humanState(c.slot, Math.max(0, Math.min(3, m.hp | 0)), Math.max(0, m.badges | 0), (Array.isArray(m.targets) ? m.targets : []).slice(0, 8).map((x: unknown) => Number(x) | 0), !!m.armed); break;
+      case "debugEnd": if (process.env.STARFALL_TEST && c.match) (c.match.sim as any).out.end(-1); break; // tests only: finish the running match now
       case "ko": if (c.match && c.alive) { c.match.sim.humanKO(c.slot, m.by | 0); c.alive = false; } break;
     }
   });
@@ -111,7 +123,8 @@ setInterval(() => {
   if (lobby.members.size) {
     const left = Math.max(0, LOBBY_TIMEOUT - (now - lobby.firstJoin) / 1000);
     const allReady = [...lobby.members.values()].every(c => c.ready);
-    if (lobby.members.size >= MAX || left <= 0 || allReady) startMatch();
+    if (liveMatch()) { /* one match at a time: lobby waits (joiners are spectating) */ }
+    else if (lobby.members.size >= MAX || left <= 0 || allReady) startMatch();
     else { const s = Math.ceil(left); if (s !== lobby.lastCd) { lobby.lastCd = s; lobbyBroadcast({ t: "lobbyCountdown", seconds: left, humans: lobby.members.size }); } }
   }
   for (const m of matches.values()) {
