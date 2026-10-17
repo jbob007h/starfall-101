@@ -61,6 +61,7 @@ export class MatchSim {
   }
   private eliminate(s: Slot, by: number) {
     s.alive = false; s.hp = 0; s.place = this.alive().length + 1;
+    { const rest = this.alive(); if (rest.length === 1 && (by < 0 || !this.slots[by] || by === s.id)) by = rest[0].id; } // final KO: always credit the winner (duel attrition, field deaths, quits)
     const k = this.slots[by]; if (k && k.alive) k.badges += 1 + Math.floor(s.badges / 2); // humans also self-count from ko events
     this.out.ko(s.id, by, s.place, s.badges);
     for (const b of this.slots) if (b.target === s.id) b.target = -2;
@@ -92,7 +93,7 @@ export class MatchSim {
   private duelTick(dt: number, al: Slot[]) {
     const b = al.find(x => x.ai); if (!b) return;
     b.regen += dt; if (b.regen > DUEL_REGEN && b.hp < DUEL_HP) { b.hp++; b.regen = 0; }
-    if (this.time - this.duelT > 20 && Math.random() < dt / 9) this.damage(b, 1, -2);
+    if (this.time - this.duelT > 20 && Math.random() < dt / 9) this.damage(b, 1, al.find(x => !x.ai)?.id ?? -2); // duel attrition is the human opponent's pressure
   }
   /** Mini-boss attacks on each human: none before 2:00 / calm; every ~60-90 s mid-game, ~30-45 s in the final 10 / duel. */
   private bossScheduler(dt: number, humans: Slot[], n: number) {

@@ -20,4 +20,9 @@ const o1 = await p.evaluate(() => [window.__game.state, window.__game.place, win
 await p.evaluate(() => { window.__game.endSel = 0; }); await p.keyboard.press("Enter"); await p.waitForTimeout(2500);
 const o2 = await p.evaluate(() => [window.__game.state, window.__game.spec, window.__game.late, window.__game.aliveAI]);
 console.log("offline duel loss:", JSON.stringify({ o1, o2 }), o1[0] === "over" && o1[1] === 2 && (o2[0] === "lobby" || o2[0] === "play") && o2[1] === -1 && !o2[2] ? "ok" : "FAIL offline NEW MATCH after 2nd place");
+// weapon pity: at the lowest weapon the next drop is W; with a W on screen normal odds; above lowest normal odds
+const pity = await p.evaluate(() => { const g = window.__game, R = Math.random, out = [];
+  const drop = () => { Math.random = () => 0.01; const e = { x: 50, y: 50, hp: 0, col: 0, spr: 0, uid: 1 }; g.enemies.push(e); try { g.killEnemy(e, true); } catch (x) { out.push("err " + x); } Math.random = R; return g.items.filter(q => q.kind !== "dot").pop()?.kind; };
+  g.state = "play"; g.items = []; g.weapon = 0; out.push(drop()); out.push(drop()); g.items = []; out.push(drop()); g.weapon = 1; let n = 0, w = 0; for (let k = 0; k < 3000; k++) { g.items = []; const e = { x: 50, y: 50, hp: 0, col: 0, spr: 0, uid: 1 }; g.enemies.push(e); g.killEnemy(e, true); const it = g.items.find(q => q.kind !== "dot"); if (it) { n++; if (it.kind === "W") w++; } } out.push(+(w / Math.max(1, n)).toFixed(2)); return out; });
+console.log("pity:", JSON.stringify(pity), pity[0] === "W" && pity[2] === "W" && pity[3] > 0.15 && pity[3] < 0.45 ? "ok" : "FAIL weapon pity");
 console.log(JSON.stringify(r)); console.log("errors:", errs); await b.close();

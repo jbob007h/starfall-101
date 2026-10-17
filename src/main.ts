@@ -696,7 +696,7 @@ class Game {
   }
   bombBoss(e: Enemy) {
     if (e.bv === 2 && e.tur!.some(h => h > 0)) { e.tur!.forEach((h, i) => { if (h > 0) this.damageBoss(e, 10, i); }); return; }
-    this.damageBoss(e, 15);
+    this.damageBoss(e, e.fb ? 7.5 : 15); // final bosses take half bomb damage (also per triple-bomb blast)
   }
   fireAt(x: number, y: number, a: number, sp: number, col: string, r = 2) { this.eb.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r, col }); }
   updateBoss(e: Enemy, dt: number) {
@@ -761,7 +761,7 @@ class Game {
       this.shake = 10; this.hitstop = 10; audio.explodeBig(); audio.musicEvent("bossDown"); this.flash = 0.3; this.flashCol = YEL; this.score += 20000;
       if (e.fb) { this.popup("FINAL BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(e.sender ?? -1, 2, 30); this.score += 30000;
         if (this.duel) this.finalQ = { t: 18, pilot: e.fp ?? 0, sender: e.sender ?? -1, again: true }; }
-      else { this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); this.reflect(e.sender ?? -1, 1, 12); }
+      else { this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); const sd = e.sender ?? -1; if (sd >= 0 && this.rivals[sd]?.alive) this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(sd, 1, 12); }
       for (let i = 0; i < 12; i++) this.items.push({ x: e.x + rnd(-15, 15), y: e.y + rnd(-10, 10), vx: rnd(-30, 30), vy: rnd(-60, 0), kind: "dot", t: 0 });
       this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pick(["W", "B", "G", "F", "S"]), t: 0 });
       this.chainAdd(e.col, 5);
@@ -777,7 +777,8 @@ class Game {
       if (f) { f.killed++; if (f.killed >= f.total && !f.lost) this.formClear(f, e); }
     } else if (f) f.lost = true;
     const nd = ri(1, 2) + (e.up ?? 0); for (let i = 0; i < nd; i++) this.items.push({ x: e.x, y: e.y, vx: rnd(-20, 20), vy: rnd(-50, -10), kind: "dot", t: 0 });
-    if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pickPowerup(), t: 0 });
+    // weapon pity: at the lowest weapon level the next drop is always W (again if it scrolls off); normal odds once a W is up or collected
+    if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: this.weapon === 0 && !this.items.some(it => it.kind === "W") ? "W" : pickPowerup(), t: 0 });
   }
   chainAdd(col: number, extra: number) {
     if (this.chain === 0) this.chainCol = col === SENT ? -1 : col;

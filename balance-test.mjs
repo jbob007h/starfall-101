@@ -48,11 +48,11 @@ if (ONLY === "grid") { // per-boss rate grid: node balance-test.mjs N 0 grid  ->
 const boss = [];
 for (let i = +(process.env.FROM || 0); i < 15 && ONLY !== "spec"; i++) {
   const runs = [];
-  for (let r = 0; r < BR; r++) runs.push(await p.evaluate(i => {
-    const g = window.__game; window.__arena(true); const e = g.spawnFinal(i, 0); g.cutIn = null;
-    let n = 0, bullets = 0, fr = 0; while (!e.dead && e.fb.t < 150) { g.formCd = 1e9; g.update(1 / 60); n++; if (n % 6 === 0) { bullets += g.eb.length; fr++; } }
+  for (let r = 0; r < BR; r++) runs.push(await p.evaluate(([i, NB]) => { // NB = BOMBS env: bot holds that many bombs and fires one every 2.5 s once the boss is in
+    const g = window.__game; window.__arena(true); g.bombs = NB; const e = g.spawnFinal(i, 0); g.cutIn = null;
+    let n = 0, bullets = 0, fr = 0; while (!e.dead && e.fb.t < 150) { g.formCd = 1e9; g.update(1 / 60); n++; if (n % 6 === 0) { bullets += g.eb.length; fr++; } if (g.bombs > 0 && n % 150 === 0) g.bomb(); }
     return { ttk: +e.fb.t.toFixed(1), hits: g.hits, onScreen: Math.round(bullets / fr), dead: e.dead };
-  }, i));
+  }, [i, +(process.env.BOMBS || 0)]));
   const avg = k => +(runs.reduce((a, x) => a + x[k], 0) / runs.length).toFixed(1);
   const hv = runs.map(x => x.hits), hm = hv.reduce((a, x) => a + x, 0) / hv.length, se = Math.sqrt(hv.reduce((a, x) => a + (x - hm) ** 2, 0) / Math.max(1, hv.length - 1) / hv.length);
   boss.push({ i, name: await p.evaluate(i => window.__game.bossName({ bv: 100 + i }), i), ttk: avg("ttk"), hits: +hm.toFixed(2), hitsSE: +se.toFixed(2), bullets: avg("onScreen"), killed: runs.every(x => x.dead) });
