@@ -15,6 +15,17 @@ const PX = 184, PY = 4, PW = 272, PH = 324; const BY = PY + PH + 3; // bottom HU
 const COLORS = ["#ff3cc8", "#3cf0ff", "#ffe040", "#60ff80"];
 const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
 const SENT = 4; const SENT_COL = "#ff5050";
+
+// ---- boss rush constants / saved bests ----
+const RUSH_N = 15, RUSH_NOHIT = 25000, RUSH_PICKS = ["HEAL", "WEAPON UP", "+1 BOMB"];
+interface RushBest { time: number; score: number; rounds: number; }
+const LS_RUSH = "sf101rush";
+function rushBests(): Record<string, RushBest> { try { return JSON.parse(localStorage.getItem(LS_RUSH) || "{}") || {}; } catch { return {}; } }
+function rushBest(pilot: number): RushBest | null { return rushBests()[PILOT_NAMES[pilot]] ?? null; }
+function saveRushBest(pilot: number, b: RushBest) { try { const all = rushBests(); all[PILOT_NAMES[pilot]] = b; localStorage.setItem(LS_RUSH, JSON.stringify(all)); } catch { /* private mode */ } }
+function fmtT(s: number) { const m = Math.floor(s / 60), r = s - m * 60; return m + ":" + r.toFixed(1).padStart(4, "0"); }
+/** Boss rush runs with no transport at all (no lobby, no sim, no rivals). */
+const NULL_NET: Transport = { localId: -1, online: false, on() {}, joinLobby() {}, leaveLobby() {}, requestStart() {}, sendAttack() {}, sendState() {}, sendKO() {}, sendSnap() {}, spectate() {}, tick() {} };
 const LS_MODE = "sf101mode";
 const MENU_STATES: string[] = ["title", "name", "pilot", "controls", "lobby"];
 const PILOT_COLS = 4; // pilot-select grid columns (15 pilots + RANDOM = 4x4)
@@ -172,6 +183,129 @@ class Game {
     this.state = "play"; this.spec = -1; this.specSnaps = []; this.specLb = false; this.watched = false; this.ctlBind = null; audio.init(); audio.updateMusic({ remaining: 101, duel: false, lowHealth: false, hp: 3, bombs: 3, chain: 0, tripleReady: false }); audio.startMusic();
     this.popup("STAGE START!", PW / 2, PH / 2 - 20, YEL, 3);
   }
+  // ================= BOSS RUSH (solo, offline): all 15 final bosses back to back, your own pilot's boss last =================
+  rush: null | { order: number[]; round: number; t: number; roundT: number; times: number[]; noHit: boolean[]; hitThis: boolean; phase: "intro" | "fight" | "pick" | "breather";
+    phaseT: number; pickSel: number; boss: Enemy | null; won: boolean; rank: string; best: RushBest | null; newTime: boolean; newScore: boolean; picks: string[] } = null;
+  startRush() {
+    this.setNet(NULL_NET); this.late = false; this.spec = -1; this.specSnaps = []; FB_TUNE.rate.fill(1);
+    this.pilot = resolvePilot(this.pilotChoice);
+    const others = Array.from({ length: FINAL_BOSSES.length }, (_, i) => i).filter(i => i !== this.pilot);
+    for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; }
+    this.rush = { order: [...others, this.pilot], round: 0, t: 0, roundT: 0, times: [], noHit: [], hitThis: false, phase: "intro", phaseT: 2.2, pickSel: 0, boss: null, won: false, rank: "", best: rushBest(this.pilot), newTime: false, newScore: false, picks: [] };
+    this.reset([]); for (const r of this.rivals) { r.alive = false; r.place = 0; }
+    this.paused = false; this.endSel = 0; this.popups = []; this.popup("BOSS RUSH!", PW / 2, PH / 2 - 20, YEL, 3); this.popup("15 BOSSES. NO CONTINUES.", PW / 2, PH / 2 - 2, WHT, 1);
+  }
+  spawnRushBoss() {
+    const R = this.rush!, idx = R.order[R.round], k = R.round, last = k === RUSH_N - 1;
+    FB_TUNE.rate.fill(1); FB_TUNE.rate[idx] = 0.9 + k * 0.02; // density: +2% fire rate per round (bullet speed rides on ramp)
+    this.eb = []; const e = this.spawnFinal(idx, -1); e.hp = e.maxhp = Math.round((e.maxhp ?? e.hp) * (0.8 + k * 0.035)); // HP: 80% .. 129%
+    R.boss = e; R.phase = "fight"; R.roundT = 0; R.hitThis = false;
+    this.cutIn = { t: 0, name: FINAL_BOSSES[idx].name, title: last ? "FACE YOUR SHADOW" : "BOSS RUSH  ROUND " + (k + 1) + " / " + RUSH_N, sub: last ? "YOUR OWN NEMESIS" : "NO-HIT BONUS +" + RUSH_NOHIT, boss: idx, dur: last ? 2.4 : 1.8 };
+    if (last) { this.popup("FACE YOUR SHADOW", PW / 2, PH / 2 - 30, MAG, 3); this.flash = 0.4; this.flashCol = MAG; }
+  }
+  updateRush(dt: number) {
+    const R = this.rush!; if (this.dead) return;
+    R.t += dt;
+    if (R.phase === "intro" || R.phase === "breather") { R.phaseT -= dt; if (R.phaseT <= 0) this.spawnRushBoss(); return; }
+    if (R.phase !== "fight") return;
+    R.roundT += dt;
+    if (R.boss?.dead) {
+      R.times.push(R.roundT); R.noHit.push(!R.hitThis); R.boss = null; this.eb = [];
+      const tb = Math.max(0, Math.round(60 - R.roundT)) * 300; this.score += tb;
+      this.popup("ROUND " + (R.round + 1) + " CLEAR  " + fmtT(R.roundT), PW / 2, PH / 2 + 4, CYA, 1);
+      if (!R.hitThis) { this.score += RUSH_NOHIT; this.popup("NO-HIT BONUS +" + RUSH_NOHIT, PW / 2, PH / 2 + 16, YEL, 1); }
+      R.round++;
+      if (R.round >= RUSH_N) { this.rushEnd(true); return; }
+      R.phase = "pick"; R.phaseT = 5; R.pickSel = this.hp < 3 ? 0 : this.weapon < 3 ? 1 : 2;
+    }
+  }
+  updateRushPick(dt: number) {
+    const R = this.rush!; R.phaseT -= dt;
+    const lr = (hit("ArrowRight", "KeyD", "PadRight") || actHit("right") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") || actHit("left") ? 1 : 0);
+    if (lr) { R.pickSel = (R.pickSel + lr + 3) % 3; audio.tone(520, 0.04, "square", 0.05); }
+    if (R.phaseT < 4.6 && (hit("Enter", "Space", "KeyZ", "PadA") || actHit("fire"))) this.rushPick(R.pickSel);
+    else if (R.phaseT <= 0) this.rushPick(R.pickSel);
+  }
+  /** Breather reward: 0 HEAL (full hearts), 1 WEAPON UP, 2 +1 BOMB. */
+  rushPick(i: number) {
+    const R = this.rush!; if (R.phase !== "pick") return; R.picks.push(RUSH_PICKS[i]);
+    if (i === 0) { this.hp = 3; this.popup("HEARTS RESTORED", this.px, this.py - 16, MAG, 1); }
+    else if (i === 1) { if (this.weapon < 3) { this.weapon++; this.popup("WEAPON UP!", this.px, this.py - 16, CYA, 1); } else { this.score += 5000; this.popup("MAX 5000", this.px, this.py - 16, CYA, 1); } }
+    else { this.bombs = Math.min(5, this.bombs + 1); this.popup("+1 BOMB", this.px, this.py - 16, YEL, 1); }
+    audio.power(); R.phase = "breather"; R.phaseT = 2.2;
+  }
+  rushEnd(won: boolean) {
+    const R = this.rush!; R.won = won; this.dead = true; this.state = "over"; this.endT = this.realT; FB_TUNE.rate.fill(1);
+    const nh = R.noHit.filter(x => x).length;
+    R.rank = !won ? (R.round >= 10 ? "B" : "C") : nh >= 10 && R.t <= 480 ? "S" : nh >= 5 && R.t <= 660 ? "A" : "B";
+    const b = rushBest(this.pilot) ?? { time: 0, score: 0, rounds: 0 };
+    R.newTime = won && (!b.time || R.t < b.time); R.newScore = this.score > b.score;
+    saveRushBest(this.pilot, { time: R.newTime ? R.t : b.time, score: Math.max(b.score, this.score), rounds: Math.max(b.rounds, R.round) }); R.best = rushBest(this.pilot);
+    if (won) { this.buildWinStars(); this.popup("BOSS RUSH CLEAR!", PW / 2, PH / 2, YEL, 3); audio.musicEvent("victory"); }
+    else { audio.musicEvent("defeat"); audio.explodeBig(); this.burst(this.px, this.py, YEL, 80, 200); this.shake = 14; }
+  }
+  renderRushPanels() {
+    const R = this.rush!, LW = 176;
+    ctx.fillStyle = "#0c0418"; ctx.fillRect(2, 2, LW, 354); this.frame(2, 2, LW, 354, MAG);
+    drawText(ctx, "BOSS RUSH", 90, 8, YEL, 2, "center", MAG);
+    drawText(ctx, "ROUND " + Math.min(R.round + 1, RUSH_N) + " / " + RUSH_N, 90, 26, WHT, 1, "center");
+    R.order.forEach((bi, i) => { const y = 40 + i * 13, cur = i === R.round && !R.won, done = i < R.round, last = i === RUSH_N - 1;
+      if (cur) { ctx.fillStyle = "#2a0838"; ctx.fillRect(6, y - 2, LW - 8, 11); }
+      const nm = done || cur || last ? FINAL_BOSSES[bi].name : "? ? ?";
+      drawText(ctx, String(i + 1).padStart(2, "0"), 10, y, done ? DIM : cur ? YEL : "#8070b0", 1);
+      drawText(ctx, nm.length > 16 ? nm.slice(0, 16) : nm, 26, y, done ? "#60ff80" : cur ? YEL : last ? MAG : "#8070b0", 1);
+      if (done) { drawText(ctx, fmtT(R.times[i]), 172, y, R.noHit[i] ? YEL : CYA, 1, "right"); } });
+    drawText(ctx, "YELLOW TIME = NO-HIT", 90, 240, DIM, 1, "center");
+    drawText(ctx, "ATTACKS STRIKE THE BOSS", 90, 254, CYA, 1, "center");
+    drawText(ctx, "CHAIN KILLS, CASH IN", 90, 264, CYA, 1, "center");
+    const b = R.best; drawText(ctx, "BEST (" + PILOT_NAMES[this.pilot] + ")", 90, 284, MAG, 1, "center");
+    drawText(ctx, b?.time ? "TIME " + fmtT(b.time) : "TIME --:--", 90, 296, WHT, 1, "center"); drawText(ctx, "SCORE " + (b?.score ?? 0), 90, 308, WHT, 1, "center");
+    // right column: pilot + run stats
+    ctx.fillStyle = "#0c0418"; ctx.fillRect(462, 2, LW, 354); this.frame(462, 2, LW, 354, CYA);
+    drawPilot(ctx, this.pilot, 48, 470, 10, CYA); drawText(ctx, this.name, 526, 12, CYA, 1); drawText(ctx, PILOT_NAMES[this.pilot], 526, 24, WHT, 2);
+    const sp = SPECIALS[PILOT_SPECIAL[this.pilot] ?? 0]; drawText(ctx, "SPECIAL " + sp.name, 526, 46, sp.col, 1);
+    const row = (l: string, v: string, y: number, c = WHT) => { drawText(ctx, l, 470, y, "#8070b0", 1); drawText(ctx, v, 630, y, c, 1, "right"); };
+    row("TOTAL TIME", fmtT(R.t), 76, YEL); row("BOSS TIME", R.phase === "fight" ? fmtT(R.roundT) : "--", 90, CYA); row("SCORE", String(this.score), 104);
+    row("NO-HIT CLEARS", String(R.noHit.filter(x => x).length), 118, YEL);
+    drawText(ctx, "HEARTS", 470, 140, "#8070b0", 1); for (let i = 0; i < 3; i++) { ctx.fillStyle = i < this.hp ? MAG : DIM; ctx.fillRect(560 + i * 12, 139, 9, 7); }
+    drawText(ctx, "BOMBS", 470, 154, "#8070b0", 1); for (let i = 0; i < this.bombs; i++) { ctx.fillStyle = YEL; ctx.fillRect(560 + i * 11, 153, 7, 7); }
+    drawText(ctx, "WEAPON", 470, 168, "#8070b0", 1); for (let i = 0; i < 4; i++) { ctx.fillStyle = i <= this.weapon ? CYA : DIM; ctx.fillRect(560 + i * 9, 168, 7, 5); }
+    if (R.boss && !R.boss.dead) { drawText(ctx, "BOSS HP", 470, 186, "#8070b0", 1); ctx.fillStyle = DIM; ctx.fillRect(470, 196, 160, 6); ctx.fillStyle = SENT_COL; ctx.fillRect(470, 196, Math.round(160 * Math.max(0, R.boss.hp) / (R.boss.maxhp ?? 1)), 6); }
+    drawText(ctx, "NO CONTINUES", 550, 220, MAG, 1, "center"); drawText(ctx, "HEARTS CARRY OVER", 550, 232, "#8070b0", 1, "center");
+    drawText(ctx, pad.connected ? "START PAUSE" : kn("pause") + "/ESC PAUSE", 550, 340, CYA, 1, "center");
+  }
+  renderRushPick() {
+    const R = this.rush!, w = 252, h = 118, x = PX + (PW - w) / 2, y = PY + 80;
+    ctx.fillStyle = "rgba(6,2,14,0.9)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, YEL);
+    drawText(ctx, "ROUND " + R.round + " CLEAR!", x + w / 2, y + 6, YEL, 2, "center", "#000");
+    drawText(ctx, "TIME " + fmtT(R.times[R.times.length - 1] ?? 0) + (R.noHit[R.noHit.length - 1] ? "   NO HIT!" : ""), x + w / 2, y + 24, WHT, 1, "center");
+    drawText(ctx, "CHOOSE ONE", x + w / 2, y + 36, CYA, 1, "center");
+    const cols = [MAG, CYA, YEL], subs = [this.hp >= 3 ? "FULL ALREADY" : this.hp + " > 3 HEARTS", this.weapon >= 3 ? "MAX: +5000" : "LEVEL " + (this.weapon + 1) + " > " + (this.weapon + 2), this.bombs >= 5 ? "MAX 5" : this.bombs + " > " + (this.bombs + 1)];
+    RUSH_PICKS.forEach((t, i) => { const bx = x + 8 + i * 80, by = y + 48, on = i === R.pickSel, bl = on && Math.floor(this.realT * 4) % 2;
+      ctx.fillStyle = on ? "#2a0838" : "#0c0418"; ctx.fillRect(bx, by, 76, 46); this.frame(bx, by, 76, 46, on ? (bl ? WHT : YEL) : "#3a3070");
+      if (i === 0) for (let k = 0; k < 3; k++) { ctx.fillStyle = k < 3 ? cols[0] : DIM; ctx.fillRect(bx + 22 + k * 12, by + 8, 8, 7); }
+      else if (i === 1) for (let k = 0; k < 4; k++) { ctx.fillStyle = cols[1]; ctx.fillRect(bx + 20 + k * 10, by + 14 - k * 2, 7, 3 + k * 2); }
+      else { ctx.fillStyle = YEL; ctx.fillRect(bx + 33, by + 7, 10, 10); ctx.fillStyle = "#806000"; ctx.fillRect(bx + 36, by + 10, 4, 4); }
+      drawText(ctx, t, bx + 38, by + 22, on ? WHT : cols[i], 1, "center"); drawText(ctx, subs[i], bx + 38, by + 34, "#8070b0", 1, "center"); });
+    drawText(ctx, "LEFT/RIGHT CHOOSE  ENTER TAKE  (" + Math.max(0, Math.ceil(R.phaseT)) + ")", x + w / 2, y + h - 12, CYA, 1, "center");
+  }
+  renderRushResults() {
+    const R = this.rush!, x = PX, y = PY, w = PW, h = PH;
+    ctx.fillStyle = "rgba(6,2,14,0.94)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, R.won ? YEL : MAG);
+    drawText(ctx, R.won ? "BOSS RUSH CLEAR!" : "GAME OVER", x + w / 2, y + 8, R.won ? YEL : MAG, R.won ? 2 : 3, "center", "#000");
+    drawText(ctx, "ROUNDS CLEARED " + R.round + " / " + RUSH_N, x + w / 2, y + 32, WHT, 1, "center");
+    drawText(ctx, "RANK", x + 40, y + 50, "#8070b0", 1); drawText(ctx, R.rank, x + 40, y + 60, R.rank === "S" ? YEL : R.rank === "A" ? CYA : R.rank === "B" ? "#60ff80" : MAG, 5);
+    const row = (l: string, v: string, yy: number, c = WHT) => { drawText(ctx, l, x + 96, yy, "#8070b0", 1); drawText(ctx, v, x + w - 14, yy, c, 1, "right"); };
+    row("TOTAL TIME", fmtT(R.t) + (R.newTime ? " NEW BEST!" : ""), y + 52, R.newTime ? YEL : WHT); row("SCORE", this.score + (R.newScore ? " NEW BEST!" : ""), y + 64, R.newScore ? YEL : WHT);
+    row("NO-HIT CLEARS", String(R.noHit.filter(q => q).length), y + 76, YEL);
+    row("BEST TIME (" + PILOT_NAMES[this.pilot] + ")", R.best?.time ? fmtT(R.best.time) : "--:--", y + 88, CYA); row("BEST SCORE", String(R.best?.score ?? 0), y + 100, CYA);
+    drawText(ctx, "#   BOSS", x + 10, y + 118, "#8070b0", 1); drawText(ctx, "TIME", x + w - 14, y + 118, "#8070b0", 1, "right");
+    R.order.forEach((bi, i) => { const yy = y + 130 + i * 10, done = i < R.times.length, fail = !R.won && i === R.round;
+      drawText(ctx, String(i + 1).padStart(2, "0") + "  " + (done || fail ? FINAL_BOSSES[bi].name : "-"), x + 10, yy, done ? WHT : fail ? MAG : DIM, 1);
+      drawText(ctx, done ? fmtT(R.times[i]) + (R.noHit[i] ? " NO HIT" : "") : fail ? "DOWN" : "", x + w - 14, yy, done ? (R.noHit[i] ? YEL : CYA) : MAG, 1, "right"); });
+    this.renderEndMenu(x, y + h - 26, w);
+  }
+
   // ---------- network / lobby ----------
   net: Transport = new LocalSimTransport(); netMsg = ""; padMsgT = 0; padMsg = "";
   name = (() => { const q = new URLSearchParams(location.search).get("name"); if (q) return q.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || "PILOT";
@@ -300,7 +434,7 @@ class Game {
   endSel = 0; pauseSel = 0;
   /** Leave the current lobby/match/spectating session and go back to the title screen (music reset, ready for a new match). */
   quitToTitle() {
-    this.late = false;
+    this.late = false; if (this.rush) { this.rush = null; FB_TUNE.rate.fill(1); }
     this.stopSpectate(); this.watched = false; this.net.leaveLobby();
     this.paused = false; this.dead = false; this.duel = false; this.endSel = 0; this.pauseSel = 0; this.titleSel = 0; this.lobbyVoted = false; this.lobbyCd = -1; this.cutIn = null;
     audio.stopMusic(); audio.setRemaining(101, false); keys.clear();
@@ -308,13 +442,13 @@ class Game {
   }
   /** NEW MATCH / TITLE SCREEN selector drawn on all post-match screens. */
   renderEndMenu(x: number, y: number, w: number) {
-    const items = ["NEW MATCH", "TITLE SCREEN"], bw = 84, gap = 8, x0 = x + (w - bw * 2 - gap) / 2;
+    const items = [this.rush ? "NEW RUN" : "NEW MATCH", "TITLE SCREEN"], bw = 84, gap = 8, x0 = x + (w - bw * 2 - gap) / 2;
     items.forEach((t, i) => { const bx = x0 + i * (bw + gap), sel = i === this.endSel, bl = sel && Math.floor(this.realT * 4) % 2;
       ctx.fillStyle = sel ? "#2a0838" : "#0c0418"; ctx.fillRect(bx, y, bw, 13); ctx.strokeStyle = sel ? (bl ? YEL : CYA) : DIM; ctx.strokeRect(bx + 0.5, y + 0.5, bw - 1, 12);
       drawText(ctx, (sel ? "> " : "") + t, bx + bw / 2, y + 4, sel ? YEL : "#8070b0", 1, "center"); });
   }
   endHint() { return pad.connected ? "A/START SELECT  B TITLE" : "ENTER SELECT  ESC TITLE"; }
-  startLobby() { this.spec = -1; this.specSnaps = []; this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.pilot = resolvePilot(this.pilotChoice); this.net.joinLobby(this.name, this.pilot); }
+  startLobby() { if (this.playMode === "rush") { this.startRush(); return; } this.spec = -1; this.specSnaps = []; this.state = "lobby"; this.lobbyLog = []; this.lobbyCount = 0; this.lobbyCd = -1; this.lobbyHumans = 0; this.lobbyVoted = false; audio.init(); this.pilot = resolvePilot(this.pilotChoice); this.net.joinLobby(this.name, this.pilot); }
   onNet(e: NetEvent) {
     switch (e.type) {
       case "lobbyJoin": this.lobbyCount = e.count; if (!e.player.isBot) { this.lobbyHumans++; this.lobbyLog.push((e.player.id === this.net.localId ? e.player.name + " (YOU)" : e.player.name) + " JOINED"); } break;
@@ -349,7 +483,7 @@ class Game {
   get aliveAI() { let n = 0; for (const r of this.rivals) if (r.alive) n++; return n; }
   get remaining() { return this.aliveAI + (this.dead || this.viewing ? 0 : 1); }
   get calm() { return this.time < 90; }
-  get ramp() { return (1 + (100 - this.aliveAI) / 100 * 1.3) * (this.calm ? 0.65 : 1) * (this.duel ? 1.15 : 1); }
+  get ramp() { if (this.rush) return 2.2 + this.rush.round * 0.06; return (1 + (100 - this.aliveAI) / 100 * 1.3) * (this.calm ? 0.65 : 1) * (this.duel ? 1.15 : 1); }
 
   popup(text: string, x: number, y: number, col: string, scale = 2, ui = false) {
     if (this.popups.some(p => p.text === text && p.t < 0.4)) return;
@@ -392,12 +526,16 @@ class Game {
         if (this.titleSel === 1 && lr) { const n = PILOT_COUNT + 1, cur = this.pilotChoice === RANDOM_PILOT ? PILOT_COUNT : this.pilotChoice, nx = (cur + lr + n) % n;
           this.pilotChoice = nx === PILOT_COUNT ? RANDOM_PILOT : nx; savePilotChoice(this.pilotChoice); audio.init(); audio.tone(780, 0.05, "square", 0.06); }
         else if (actHit("song") || (this.titleSel === 3 && lr)) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); }
-        else if (this.titleSel === 4 && (lr || hit("Enter", "Space", "KeyZ", "PadStart", "PadA"))) { audio.init(); this.setPlayMode(this.playMode === "online" ? "offline" : "online"); audio.tone(780, 0.05, "square", 0.06); }
+        else if (this.titleSel === 4 && (lr || hit("Enter", "Space", "KeyZ", "PadStart", "PadA"))) { audio.init(); const ms = ["online", "offline", "rush"] as const; this.setPlayMode(ms[(ms.indexOf(this.playMode) + (lr < 0 ? 2 : 1)) % 3]); audio.tone(780, 0.05, "square", 0.06); }
         else if (hit("KeyC", "PadY")) this.openControls();
         else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 3) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel === 2) this.openControls(); else if (this.titleSel === 1) this.openPilot("title"); else this.openName(); }
       }
       else if (this.state === "name") this.updateName();
       else if (this.state === "pilot") this.updatePilot();
+      else if (this.state === "over" && this.rush) { // boss rush results
+        if (hit("ArrowLeft", "ArrowRight", "KeyA", "KeyD", "PadLeft", "PadRight", "Tab") || actHit("left") || actHit("right")) { this.endSel ^= 1; audio.tone(520, 0.04, "square", 0.05); }
+        if (this.realT - this.endT > 1) { if (hit("Escape", "PadB", "KeyT")) this.quitToTitle(); else if (hit("Enter", "Space", "PadStart", "PadA") || actHit("fire")) { if (this.endSel) this.quitToTitle(); else this.startRush(); } }
+      }
       else if (this.state === "over" || this.state === "win") {
         this.updateRivals(dt); this.updateSpecParts(dt);
         if (this.spec >= 0 && hit("KeyL", "Tab", "PadY")) { this.specLb = !this.specLb; }
@@ -430,14 +568,15 @@ class Game {
     if (actHit("song")) { audio.setSoundtrack(audio.soundtrack + 1); this.popup("MUSIC: " + audio.soundtrackName, PW / 2, PH - 84, CYA, 1.5); }
     audio.pauseMusic(this.paused && !this.liveMatch());
     if (this.paused && !this.liveMatch()) { if (this.net.online && !this.dead) this.net.sendState(this.hp, this.badges, this.targets, this.eligible); return; } // heartbeat: the server KOs humans who go silent // real pause only solo / vs bots; with 2+ humans the menu overlays a running match
-    for (let k = 0; k < 4; k++) if (!this.paused && actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
+    if (this.rush && this.rush.phase === "pick") { this.updateRushPick(dt); this.updateFx(dt); return; }
+    for (let k = 0; k < 4; k++) if (!this.rush && !this.paused && actHit(("tgt" + k) as Act)) { this.mode = k; this.popup("TARGET: " + MODES[k], PW / 2, PH - 70, CYA, 1); }
     if (this.hitstop > 0) { this.hitstop--; return; }
     if (this.slow > 0) { this.slow -= dt; dt *= 0.35; }
     this.time += dt;
     this.updatePlayer(dt); this.updateChain(dt); this.spawnFormations(dt); this.updateEnemies(dt); this.updateBullets(dt);
     this.updateItems(dt); this.updateWaves(dt); this.updateWarns(dt); this.net.tick(dt, this.hints()); this.updateRivals(dt); this.updateProjs(dt); this.updateFx(dt);
-    this.randCd -= dt; this.computeTargets();
-    audio.updateMusic({ remaining: this.remaining, duel: this.duel, lowHealth: this.hp === 1, hp: this.hp, bombs: this.bombs, chain: this.chain, armed: this.eligible, bossActive: this.enemies.some(e => e.boss && !e.dead), shield: this.shield, freeze: this.freeze > 0, lightning: this.zapT > 0, tripleReady: this.bombs >= 5 && this.items.some(it => it.kind === "B") });
+    this.randCd -= dt; this.computeTargets(); if (this.rush) this.updateRush(dt);
+    audio.updateMusic({ remaining: this.rush ? Math.max(3, Math.round(101 - this.rush.round * 6.6)) : this.remaining, duel: this.duel || (!!this.rush && this.rush.round >= RUSH_N - 1), lowHealth: this.hp === 1, hp: this.hp, bombs: this.bombs, chain: this.chain, armed: this.eligible, bossActive: this.enemies.some(e => e.boss && !e.dead), shield: this.shield, freeze: this.freeze > 0, lightning: this.zapT > 0, tripleReady: this.bombs >= 5 && this.items.some(it => it.kind === "B") });
   }
 
   updatePlayer(dt: number) {
@@ -458,7 +597,7 @@ class Game {
     }
     if (!this.paused && actHit("bomb")) this.bomb();
     this.updateSpecial(dt); this.updateTriple(dt);
-    if (this.hp < 3) { this.regen -= dt; if (this.regen <= 0) { this.hp++; this.regen = 20; this.popup("+1 HP", this.px, this.py - 16, CYA, 1); audio.power(); } } else this.regen = 20;
+    if (this.hp < 3 && !this.rush) { this.regen -= dt; if (this.regen <= 0) { this.hp++; this.regen = 20; this.popup("+1 HP", this.px, this.py - 16, CYA, 1); audio.power(); } } else this.regen = 20;
     // engine particles
     if (Math.random() < 0.7) this.parts.push({ x: this.px + rnd(-1, 1), y: this.py + 7, vx: rnd(-10, 10), vy: rnd(60, 120), life: 0.2, max: 0.2, col: Math.random() < 0.5 ? CYA : WHT, s: 1 });
   }
@@ -578,6 +717,13 @@ class Game {
     const c = this.chain, tier = c < WAVE_AT ? 0 : c < BOSS_AT ? 1 : 2;
     const power = Math.round(c * (1 + 0.1 * this.badges) + this.starBoost);
     const name = ["ENEMY RUSH SENT!", "BULLET WAVE SENT!", "MINI-BOSS SENT!"][tier];
+    if (this.rush) { // boss rush: the attack strikes the current boss directly
+      const b = this.rush.boss, dmg = Math.round([18, 36, 70][tier] + power * 0.6);
+      if (b && !b.dead) { this.damageBoss(b, dmg); this.popup(["STRIKE!", "HEAVY STRIKE!", "MEGA STRIKE!"][tier] + " -" + dmg, PW / 2, PH / 2 - 40, [CYA, MAG, YEL][tier], 2); this.projs.push({ sx: PX + this.px, sy: PY + this.py, ex: PX + b.x, ey: PY + b.y, t: 0, dur: 0.4, out: true, tier, power, target: -2, sender: -1, col: [CYA, MAG, YEL][tier] }); }
+      else this.popup("CHAIN BONUS", PW / 2, PH / 2 - 40, CYA, 2);
+      this.score += power * 500; audio.sent(tier); audio.musicEvent("sent", tier); this.flash = 0.15; this.flashCol = [CYA, MAG, YEL][tier];
+      this.chain = 0; this.chainCol = -1; this.chainT = 0; this.eligible = false; this.starBoost = 0; return;
+    }
     this.computeTargets();
     const tn = this.targets.length > 1 ? this.targets.length + " ATTACKERS" : (this.rivals[this.targets[0]]?.name || "?");
     this.popup(name, PW / 2, PH / 2 - 40, [CYA, MAG, YEL][tier], 2); this.popup("POWER " + power + " TO " + tn, PW / 2, PH / 2 - 26, WHT, 1);
@@ -759,7 +905,7 @@ class Game {
     this.burst(e.x, e.y, col, e.boss ? 80 : 14, e.boss ? 160 : 90); this.burst(e.x, e.y, WHT, 4, 40);
     if (e.boss) {
       this.shake = 10; this.hitstop = 10; audio.explodeBig(); audio.musicEvent("bossDown"); this.flash = 0.3; this.flashCol = YEL; this.score += 20000;
-      if (e.fb) { this.popup("FINAL BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(e.sender ?? -1, 2, 30); this.score += 30000;
+      if (e.fb) { this.popup(this.rush ? "BOSS DOWN!" : "FINAL BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); if (!this.rush) this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(e.sender ?? -1, 2, 30); this.score += 30000;
         if (this.duel) this.finalQ = { t: 18, pilot: e.fp ?? 0, sender: e.sender ?? -1, again: true }; }
       else { this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); const sd = e.sender ?? -1; if (sd >= 0 && this.rivals[sd]?.alive) this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(sd, 1, 12); }
       for (let i = 0; i < 12; i++) this.items.push({ x: e.x + rnd(-15, 15), y: e.y + rnd(-10, 10), vx: rnd(-30, 30), vy: rnd(-60, 0), kind: "dot", t: 0 });
@@ -801,6 +947,7 @@ class Game {
   hurt() {
     if (this.inv > 0 || this.dead) return;
     if (this.shield) { this.shield = false; this.inv = 1.5; this.popup("GUARD!", this.px, this.py - 14, CYA, 2); audio.power(); this.clearNear(50); return; }
+    if (this.rush) this.rush.hitThis = true;
     this.hp--; this.inv = 2.2; this.regen = 20; this.weapon = Math.max(0, this.weapon - 1);
     audio.hurt(); audio.musicEvent("hurt"); this.shake = 9; this.hitstop = 8; this.flash = 0.25; this.flashCol = "#ff2040"; this.burst(this.px, this.py, SENT_COL, 30, 120);
     this.clearNear(60);
@@ -809,6 +956,7 @@ class Game {
   }
   clearNear(r: number) { this.eb = this.eb.filter(b => { const d = Math.hypot(b.x - this.px, b.y - this.py) > r; if (!d) this.burst(b.x, b.y, b.col, 1, 30); return d; }); }
   gameOver() {
+    if (this.rush) { this.rushEnd(false); return; }
     this.dead = true; this.place = this.aliveAI + 1; this.myKoBy = this.lastAttacker; this.lbScroll = Math.max(0, this.place - 13); this.net.sendKO(this.lastAttacker); this.state = "over"; this.endT = this.realT; audio.musicEvent("defeat"); audio.explodeBig();
     this.spec = -1; this.specLb = false; this.watched = false; this.startSpectate(this.lastAttacker);
     this.burst(this.px, this.py, YEL, 80, 200); this.burst(this.px, this.py, CYA, 60, 150); this.shake = 14;
@@ -916,6 +1064,7 @@ class Game {
       if (this.time % 0.25 < dt) this.net.sendState(this.hp, this.badges, this.targets, this.eligible);
       if (this.watched) { this.snapT -= dt; if (this.snapT <= 0) { this.snapT = Math.max(0, this.snapT + 1 / 15); this.net.sendSnap(this.buildSnap()); } } // someone spectates us
     }
+    if (this.rush) return; // boss rush: no rivals
     if (!this.duel && this.aliveAI === 1 && !this.dead) { const op = this.rivals.find(r => r.alive); if (op) this.finalQ = { t: 2.6, pilot: op.avatar, sender: op.id, again: false }; this.duel = true; this.slow = 1.2; this.popup("FINAL DUEL!", PW / 2, PH / 2 - 10, YEL, 4); this.warpT = 1.4; this.flash = 0.4; this.flashCol = YEL; }
     if (this.aliveAI === 0 && !this.dead && this.state === "play") { for (const r of this.rivals) if (!r.place) r.place = 2; this.lbScroll = 0; this.buildWinStars(); this.state = "win"; this.place = 1; this.endT = this.realT; this.popup("VICTORY!", PW / 2, PH / 2, YEL, 4); audio.musicEvent("victory"); }
   }
@@ -979,15 +1128,15 @@ class Game {
   tickLobby(dt: number) { this.net.tick(dt, this.hints()); if (this.lobbyCd > 0) this.lobbyCd -= dt; }
   titleSel = 0; late = false;
   /** OFFLINE = local match vs bots (no server); ONLINE = the game server. Saved; default ONLINE when a server is reachable. */
-  playMode: "online" | "offline" = "offline"; srvUrl: string | null = null; srvOk: boolean | null = null; probing = false;
-  modeLabel() { return this.playMode === "offline" ? "OFFLINE (VS BOTS)" : this.probing ? "ONLINE (CONNECTING...)" : this.srvOk ? "ONLINE" : this.srvUrl ? "ONLINE (NO SERVER)" : "ONLINE (UNAVAILABLE)"; }
+  playMode: "online" | "offline" | "rush" = "offline"; srvUrl: string | null = null; srvOk: boolean | null = null; probing = false;
+  modeLabel() { return this.playMode === "rush" ? "BOSS RUSH (SOLO)" : this.playMode === "offline" ? "OFFLINE (VS BOTS)" : this.probing ? "ONLINE (CONNECTING...)" : this.srvOk ? "ONLINE" : this.srvUrl ? "ONLINE (NO SERVER)" : "ONLINE (UNAVAILABLE)"; }
   async initPlayMode() {
     this.srvUrl = serverUrl(); let saved: string | null = null; try { saved = localStorage.getItem(LS_MODE); } catch { /* */ }
     if (this.srvUrl) { this.probing = true; this.srvOk = await probeServer(this.srvUrl); this.probing = false; } else this.srvOk = false;
-    this.playMode = new URLSearchParams(location.search).has("offline") ? "offline" : saved === "online" || saved === "offline" ? saved : this.srvOk ? "online" : "offline";
+    this.playMode = new URLSearchParams(location.search).has("offline") ? "offline" : saved === "online" || saved === "offline" || saved === "rush" ? saved : this.srvOk ? "online" : "offline";
     this.applyPlayMode();
   }
-  setPlayMode(m: "online" | "offline") {
+  setPlayMode(m: "online" | "offline" | "rush") {
     this.playMode = m; try { localStorage.setItem(LS_MODE, m); } catch { /* */ } this.netMsg = "";
     if (m === "online" && !this.srvOk && this.srvUrl && !this.probing) { this.probing = true; probeServer(this.srvUrl).then(ok => { this.probing = false; this.srvOk = ok; this.applyPlayMode(); }); }
     this.applyPlayMode();
@@ -995,7 +1144,7 @@ class Game {
   applyPlayMode() {
     if (this.state !== "title") return;
     const want = this.playMode === "online" && this.srvOk && this.srvUrl;
-    if (want && !this.net.online) this.setNet(new WebSocketTransport(this.srvUrl!)); else if (!want && this.net.online) this.setNet(new LocalSimTransport());
+    if (want && !this.net.online) this.setNet(new WebSocketTransport(this.srvUrl!)); else if (!want && !(this.net instanceof LocalSimTransport)) this.setNet(new LocalSimTransport());
   }
 
   // ---------- spectator mode (online): watch live humans after you are out ----------
@@ -1173,7 +1322,9 @@ class Game {
     this.drawPadMsg();
     if (this.paused) this.renderPause();
     if (this.duel && this.state === "play" && !this.dead) this.renderDuelBar();
-    if (this.state === "over" && this.realT - this.endT > 0.5 && !this.specOn()) this.renderLeaderboard(false);
+    if (this.rush && this.rush.phase === "pick" && this.state === "play") this.renderRushPick();
+    if (this.state === "over" && this.rush) { if (this.realT - this.endT > 0.8) this.renderRushResults(); }
+    else if (this.state === "over" && this.realT - this.endT > 0.5 && !this.specOn()) this.renderLeaderboard(false);
     if (this.state === "win" && this.realT - this.endT > 4.5) this.renderLeaderboard(true);
   }
   renderMain(sx: number, sy: number) {
@@ -1276,6 +1427,8 @@ class Game {
     drawText(ctx, "101-PLAYER LAST PILOT STANDING BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
     drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PLAYER " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 286, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
+    if (this.playMode === "rush") { const pc = this.pilotChoice, b = pc >= 0 ? rushBest(pc) : null;
+      drawText(ctx, pc < 0 ? "BOSS RUSH: 15 FINAL BOSSES BACK TO BACK, BESTS SAVED PER PILOT" : "BOSS RUSH BEST (" + PILOT_NAMES[pc] + "):  TIME " + (b?.time ? fmtT(b.time) : "--:--") + "   SCORE " + (b?.score ?? 0) + "   ROUNDS " + (b?.rounds ?? 0) + "/" + RUSH_N, W / 2, 297, MAG, 1, "center"); }
     ["LAUNCH", "PILOT", "CONTROLS", "MUSIC", "PLAY"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
       const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : i === 1 ? "PILOT: < " + (this.pilotChoice === RANDOM_PILOT ? "RANDOM" : PILOT_NAMES[this.pilotChoice]) + " >"
         : i === 4 ? "PLAY: < " + this.modeLabel() + " >"
@@ -1287,10 +1440,11 @@ class Game {
       ] : ["MOVE: " + mv("key") + "   FIRE: HOLD " + kn("fire") + "   FOCUS: " + kn("focus") + "   BOMB: " + kn("bomb"),
       "TARGET: " + kn("tgt0") + " RANDOM  " + kn("tgt1") + " KOS  " + kn("tgt2") + " ATTACKERS  " + kn("tgt3") + " BADGES   " + kn("mute") + " MUTE  " + kn("pause") + " PAUSE  " + kn("crt") + " CRT",
       "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
-    help.forEach((l, i) => drawText(ctx, l, W / 2, 300 + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
+    help.forEach((l, i) => drawText(ctx, l, W / 2, (this.playMode === "rush" ? 310 : 300) + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
 
   renderPanels() {
+    if (this.rush) { this.renderRushPanels(); return; }
     const LW = 176, HUDY = 172; // left column: opponents grid on top, this HUD block below it (mirrors the right column)
     ctx.save(); ctx.translate(0, HUDY);
     // left HUD
