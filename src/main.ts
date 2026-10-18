@@ -17,7 +17,7 @@ const COLOR_NAMES = ["MAGENTA", "CYAN", "GOLD", "LIME"];
 const SENT = 4; const SENT_COL = "#ff5050";
 
 // ---- boss rush constants / saved bests ----
-const RUSH_N = 15, RUSH_NOHIT = 25000, RUSH_PICKS = ["HEAL", "WEAPON UP", "+1 BOMB"];
+const RUSH_N = 15, RUSH_NOHIT = 25000, RUSH_PICKS = ["WEAPON UP", "+1 BOMB"];
 interface RushBest { time: number; score: number; rounds: number; }
 const LS_RUSH = "sf101rush";
 function rushBests(): Record<string, RushBest> { try { return JSON.parse(localStorage.getItem(LS_RUSH) || "{}") || {}; } catch { return {}; } }
@@ -74,7 +74,7 @@ const SPECIALS = [{ name: "LIGHTNING", hud: "ZAP", col: "#3cf0ff" }, { name: "IN
 //                    KAGE VOSS SABLE IRONCLAD HEX ZORUK WRAITH FANG MARISOL BRICK TALON VESPER JINX CINDER
 export const PILOT_SPECIAL = [2, 0, 2, 0, 0, 1, 0, 2, 0, 1, 2, 2, 1, 1, 1];
 const SPECIAL_SECS = 5;
-function pickPowerup() { let r = Math.random() * 100; for (const [k, w] of POWERUP_WEIGHTS) { if ((r -= w) < 0) return k; } return "W"; }
+function pickPowerup(noF = false) { const ws = noF ? POWERUP_WEIGHTS.filter(q => q[0] !== "F") : POWERUP_WEIGHTS, tot = ws.reduce((a, q) => a + q[1], 0); let r = Math.random() * tot; for (const [k, w] of ws) { if ((r -= w) < 0) return k; } return "W"; }
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 
 // ---------- sprites ----------
@@ -193,12 +193,13 @@ class Game {
     for (let i = others.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [others[i], others[j]] = [others[j], others[i]]; }
     this.rush = { order: [...others, this.pilot], round: 0, t: 0, roundT: 0, times: [], noHit: [], hitThis: false, phase: "intro", phaseT: 2.2, pickSel: 0, boss: null, won: false, rank: "", best: rushBest(this.pilot), newTime: false, newScore: false, picks: [] };
     this.reset([]); for (const r of this.rivals) { r.alive = false; r.place = 0; }
+    this.weapon = 3; this.bombs = 5; this.hp = 3;
     this.paused = false; this.endSel = 0; this.popups = []; this.popup("BOSS RUSH!", PW / 2, PH / 2 - 20, YEL, 3); this.popup("15 BOSSES. NO CONTINUES.", PW / 2, PH / 2 - 2, WHT, 1);
   }
   spawnRushBoss() {
     const R = this.rush!, idx = R.order[R.round], k = R.round, last = k === RUSH_N - 1;
     FB_TUNE.rate.fill(1); FB_TUNE.rate[idx] = 0.9 + k * 0.02; // density: +2% fire rate per round (bullet speed rides on ramp)
-    this.eb = []; const e = this.spawnFinal(idx, -1); e.hp = e.maxhp = Math.round((e.maxhp ?? e.hp) * (0.8 + k * 0.035)); // HP: 80% .. 129%
+    this.eb = []; const e = this.spawnFinal(idx, -1); e.hp = e.maxhp = Math.round((e.maxhp ?? e.hp) * (0.55 + k * 0.05)); // HP: 55% .. 125%
     R.boss = e; R.phase = "fight"; R.roundT = 0; R.hitThis = false;
     this.cutIn = { t: 0, name: FINAL_BOSSES[idx].name, title: last ? "FACE YOUR SHADOW" : "BOSS RUSH  ROUND " + (k + 1) + " / " + RUSH_N, sub: last ? "YOUR OWN NEMESIS" : "NO-HIT BONUS +" + RUSH_NOHIT, boss: idx, dur: last ? 2.4 : 1.8 };
     if (last) { this.popup("FACE YOUR SHADOW", PW / 2, PH / 2 - 30, MAG, 3); this.flash = 0.4; this.flashCol = MAG; }
@@ -214,24 +215,23 @@ class Game {
       const tb = Math.max(0, Math.round(60 - R.roundT)) * 300; this.score += tb;
       this.popup("ROUND " + (R.round + 1) + " CLEAR  " + fmtT(R.roundT), PW / 2, PH / 2 + 4, CYA, 1);
       if (!R.hitThis) { this.score += RUSH_NOHIT; this.popup("NO-HIT BONUS +" + RUSH_NOHIT, PW / 2, PH / 2 + 16, YEL, 1); }
-      R.round++;
+      if (this.hp < 3) this.popup("HEARTS REFILLED", PW / 2, PH / 2 + 28, MAG, 1); this.hp = 3; R.round++;
       if (R.round >= RUSH_N) { this.rushEnd(true); return; }
-      R.phase = "pick"; R.phaseT = 5; R.pickSel = this.hp < 3 ? 0 : this.weapon < 3 ? 1 : 2;
+      R.phase = "pick"; R.phaseT = 5; R.pickSel = this.weapon < 3 ? 0 : 1;
     }
   }
   updateRushPick(dt: number) {
     const R = this.rush!; R.phaseT -= dt;
     const lr = (hit("ArrowRight", "KeyD", "PadRight") || actHit("right") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") || actHit("left") ? 1 : 0);
-    if (lr) { R.pickSel = (R.pickSel + lr + 3) % 3; audio.tone(520, 0.04, "square", 0.05); }
+    if (lr) { R.pickSel = (R.pickSel + lr + 2) % 2; audio.tone(520, 0.04, "square", 0.05); }
     if (R.phaseT < 4.6 && (hit("Enter", "Space", "KeyZ", "PadA") || actHit("fire"))) this.rushPick(R.pickSel);
     else if (R.phaseT <= 0) this.rushPick(R.pickSel);
   }
-  /** Breather reward: 0 HEAL (full hearts), 1 WEAPON UP, 2 +1 BOMB. */
+  /** Breather reward: 0 WEAPON UP, 1 +1 BOMB (score bonus when maxed). */
   rushPick(i: number) {
     const R = this.rush!; if (R.phase !== "pick") return; R.picks.push(RUSH_PICKS[i]);
-    if (i === 0) { this.hp = 3; this.popup("HEARTS RESTORED", this.px, this.py - 16, MAG, 1); }
-    else if (i === 1) { if (this.weapon < 3) { this.weapon++; this.popup("WEAPON UP!", this.px, this.py - 16, CYA, 1); } else { this.score += 5000; this.popup("MAX 5000", this.px, this.py - 16, CYA, 1); } }
-    else { this.bombs = Math.min(5, this.bombs + 1); this.popup("+1 BOMB", this.px, this.py - 16, YEL, 1); }
+    if (i === 0) { if (this.weapon < 3) { this.weapon++; this.popup("WEAPON UP!", this.px, this.py - 16, CYA, 1); } else { this.score += 5000; this.popup("MAX 5000", this.px, this.py - 16, CYA, 1); } }
+    else if (this.bombs < 5) { this.bombs++; this.popup("+1 BOMB", this.px, this.py - 16, YEL, 1); } else { this.score += 5000; this.popup("MAX 5000", this.px, this.py - 16, YEL, 1); }
     audio.power(); R.phase = "breather"; R.phaseT = 2.2;
   }
   rushEnd(won: boolean) {
@@ -271,7 +271,7 @@ class Game {
     drawText(ctx, "BOMBS", 470, 154, "#8070b0", 1); for (let i = 0; i < this.bombs; i++) { ctx.fillStyle = YEL; ctx.fillRect(560 + i * 11, 153, 7, 7); }
     drawText(ctx, "WEAPON", 470, 168, "#8070b0", 1); for (let i = 0; i < 4; i++) { ctx.fillStyle = i <= this.weapon ? CYA : DIM; ctx.fillRect(560 + i * 9, 168, 7, 5); }
     if (R.boss && !R.boss.dead) { drawText(ctx, "BOSS HP", 470, 186, "#8070b0", 1); ctx.fillStyle = DIM; ctx.fillRect(470, 196, 160, 6); ctx.fillStyle = SENT_COL; ctx.fillRect(470, 196, Math.round(160 * Math.max(0, R.boss.hp) / (R.boss.maxhp ?? 1)), 6); }
-    drawText(ctx, "NO CONTINUES", 550, 220, MAG, 1, "center"); drawText(ctx, "HEARTS CARRY OVER", 550, 232, "#8070b0", 1, "center");
+    drawText(ctx, "NO CONTINUES", 550, 220, MAG, 1, "center"); drawText(ctx, "HEARTS REFILL PER BOSS", 550, 232, "#8070b0", 1, "center");
     drawText(ctx, pad.connected ? "START PAUSE" : kn("pause") + "/ESC PAUSE", 550, 340, CYA, 1, "center");
   }
   renderRushPick() {
@@ -280,11 +280,10 @@ class Game {
     drawText(ctx, "ROUND " + R.round + " CLEAR!", x + w / 2, y + 6, YEL, 2, "center", "#000");
     drawText(ctx, "TIME " + fmtT(R.times[R.times.length - 1] ?? 0) + (R.noHit[R.noHit.length - 1] ? "   NO HIT!" : ""), x + w / 2, y + 24, WHT, 1, "center");
     drawText(ctx, "CHOOSE ONE", x + w / 2, y + 36, CYA, 1, "center");
-    const cols = [MAG, CYA, YEL], subs = [this.hp >= 3 ? "FULL ALREADY" : this.hp + " > 3 HEARTS", this.weapon >= 3 ? "MAX: +5000" : "LEVEL " + (this.weapon + 1) + " > " + (this.weapon + 2), this.bombs >= 5 ? "MAX 5" : this.bombs + " > " + (this.bombs + 1)];
-    RUSH_PICKS.forEach((t, i) => { const bx = x + 8 + i * 80, by = y + 48, on = i === R.pickSel, bl = on && Math.floor(this.realT * 4) % 2;
+    const cols = [CYA, YEL], subs = [this.weapon >= 3 ? "MAX: +5000" : "LEVEL " + (this.weapon + 1) + " > " + (this.weapon + 2), this.bombs >= 5 ? "MAX: +5000" : this.bombs + " > " + (this.bombs + 1)];
+    RUSH_PICKS.forEach((t, i) => { const bx = x + 46 + i * 84, by = y + 48, on = i === R.pickSel, bl = on && Math.floor(this.realT * 4) % 2;
       ctx.fillStyle = on ? "#2a0838" : "#0c0418"; ctx.fillRect(bx, by, 76, 46); this.frame(bx, by, 76, 46, on ? (bl ? WHT : YEL) : "#3a3070");
-      if (i === 0) for (let k = 0; k < 3; k++) { ctx.fillStyle = k < 3 ? cols[0] : DIM; ctx.fillRect(bx + 22 + k * 12, by + 8, 8, 7); }
-      else if (i === 1) for (let k = 0; k < 4; k++) { ctx.fillStyle = cols[1]; ctx.fillRect(bx + 20 + k * 10, by + 14 - k * 2, 7, 3 + k * 2); }
+      if (i === 0) for (let k = 0; k < 4; k++) { ctx.fillStyle = cols[0]; ctx.fillRect(bx + 20 + k * 10, by + 14 - k * 2, 7, 3 + k * 2); }
       else { ctx.fillStyle = YEL; ctx.fillRect(bx + 33, by + 7, 10, 10); ctx.fillStyle = "#806000"; ctx.fillRect(bx + 36, by + 10, 4, 4); }
       drawText(ctx, t, bx + 38, by + 22, on ? WHT : cols[i], 1, "center"); drawText(ctx, subs[i], bx + 38, by + 34, "#8070b0", 1, "center"); });
     drawText(ctx, "LEFT/RIGHT CHOOSE  ENTER TAKE  (" + Math.max(0, Math.ceil(R.phaseT)) + ")", x + w / 2, y + h - 12, CYA, 1, "center");
@@ -842,7 +841,7 @@ class Game {
   }
   bombBoss(e: Enemy) {
     if (e.bv === 2 && e.tur!.some(h => h > 0)) { e.tur!.forEach((h, i) => { if (h > 0) this.damageBoss(e, 10, i); }); return; }
-    this.damageBoss(e, e.fb ? 7.5 : 15); // final bosses take half bomb damage (also per triple-bomb blast)
+    this.damageBoss(e, e.fb && !this.rush ? 7.5 : 15); // final bosses take half bomb damage outside BOSS RUSH (also per triple-bomb blast)
   }
   fireAt(x: number, y: number, a: number, sp: number, col: string, r = 2) { this.eb.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r, col }); }
   updateBoss(e: Enemy, dt: number) {
@@ -909,7 +908,7 @@ class Game {
         if (this.duel) this.finalQ = { t: 18, pilot: e.fp ?? 0, sender: e.sender ?? -1, again: true }; }
       else { this.popup("BOSS DOWN!", PW / 2, PH / 2 - 30, YEL, 3); const sd = e.sender ?? -1; if (sd >= 0 && this.rivals[sd]?.alive) this.popup("COUNTER-STRIKE SENT", PW / 2, PH / 2 - 14, WHT, 1); this.reflect(sd, 1, 12); }
       for (let i = 0; i < 12; i++) this.items.push({ x: e.x + rnd(-15, 15), y: e.y + rnd(-10, 10), vx: rnd(-30, 30), vy: rnd(-60, 0), kind: "dot", t: 0 });
-      this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pick(["W", "B", "G", "F", "S"]), t: 0 });
+      this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: pick(this.rush ? ["W", "B", "G", "S"] : ["W", "B", "G", "F", "S"]), t: 0 });
       this.chainAdd(e.col, 5);
       return;
     }
@@ -924,7 +923,7 @@ class Game {
     } else if (f) f.lost = true;
     const nd = ri(1, 2) + (e.up ?? 0); for (let i = 0; i < nd; i++) this.items.push({ x: e.x, y: e.y, vx: rnd(-20, 20), vy: rnd(-50, -10), kind: "dot", t: 0 });
     // weapon pity: at the lowest weapon level the next drop is always W (again if it scrolls off); normal odds once a W is up or collected
-    if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: this.weapon === 0 && !this.items.some(it => it.kind === "W") ? "W" : pickPowerup(), t: 0 });
+    if (Math.random() < 0.06) this.items.push({ x: e.x, y: e.y, vx: 0, vy: 20, kind: this.weapon === 0 && !this.items.some(it => it.kind === "W") ? "W" : pickPowerup(!!this.rush), t: 0 });
   }
   chainAdd(col: number, extra: number) {
     if (this.chain === 0) this.chainCol = col === SENT ? -1 : col;
@@ -1346,7 +1345,7 @@ class Game {
   renderCutIn() { // thin strip sliding along the top edge of the play area
     const c = this.cutIn!, t = c.t, e = t < 0.14 ? t / 0.14 : t > 0.68 ? Math.max(0, 1 - (t - 0.68) / 0.22) : 1, out = t > 0.68;
     const bh = 24, ox = Math.round((1 - e) * (out ? PW : -PW));
-    ctx.save(); ctx.beginPath(); ctx.rect(PX, PY, PW, PH); ctx.clip(); ctx.translate(PX + ox, PY + 1);
+    ctx.save(); ctx.beginPath(); ctx.rect(PX, PY, PW, PH); ctx.clip(); ctx.translate(PX + ox, PY + (this.enemies.some(q => q.fb && !q.dead) ? 21 : 1));
     ctx.fillStyle = "rgba(20,4,30,0.9)"; ctx.fillRect(0, 0, PW, bh);
     for (let i = 0; i < 6; i++) { const lx = ((i * 53 + t * 900) % (PW + 40)) - 20; ctx.fillStyle = i % 2 ? "rgba(255,48,208,0.35)" : "rgba(255,230,80,0.3)"; ctx.fillRect(Math.round(lx), 4 + (i * 7) % (bh - 8), 18, 1); }
     ctx.fillStyle = YEL; ctx.fillRect(0, bh - 1, PW, 1); ctx.fillStyle = MAG; ctx.fillRect(0, bh - 2, PW, 1);
@@ -1440,6 +1439,9 @@ class Game {
       ] : ["MOVE: " + mv("key") + "   FIRE: HOLD " + kn("fire") + "   FOCUS: " + kn("focus") + "   BOMB: " + kn("bomb"),
       "TARGET: " + kn("tgt0") + " RANDOM  " + kn("tgt1") + " KOS  " + kn("tgt2") + " ATTACKERS  " + kn("tgt3") + " BADGES   " + kn("mute") + " MUTE  " + kn("pause") + " PAUSE  " + kn("crt") + " CRT",
       "CHAIN SAME-COLOR KILLS. CLEAR A FULL FORMATION TO ARM AN ATTACK. IT SENDS WHEN", "THE CHAIN TIMER RUNS OUT, OR INSTANTLY AT 40 (MINI-BOSS).  CATCH FALLING STARS TO BOOST IT."];
+    if (this.playMode === "rush") help.splice(1, help.length - 1, (pad.connected ? "START" : kn("pause")) + " PAUSE (REAL PAUSE)   QUIT TO TITLE FROM PAUSE OR RESULTS",
+      "BEAT ALL 15 FINAL BOSSES BACK TO BACK. YOUR OWN PILOT'S BOSS COMES LAST. MAX WEAPON + BOMBS AT START,",
+      "HEARTS REFILL AFTER EACH BOSS. CHAIN KILLS AND CASH IN ATTACKS TO STRIKE THE BOSS. NO-HIT CLEARS SCORE BIG.");
     help.forEach((l, i) => drawText(ctx, l, W / 2, (this.playMode === "rush" ? 310 : 300) + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
   }
 
