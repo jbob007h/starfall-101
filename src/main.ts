@@ -18,16 +18,19 @@ const SENT = 4; const SENT_COL = "#ff5050";
 
 // ---- boss rush constants / saved bests ----
 const RUSH_N = 15, RUSH_NOHIT = 25000, RUSH_PICKS = ["WEAPON UP", "+1 BOMB"];
-interface RushBest { time: number; score: number; rounds: number; }
+interface RushBest { time: number; score: number; rounds: number; rank?: string; runs?: number; boss?: Record<string, { t: number; nh: boolean }>; }
+const RANK_ORD = "SABC";
 const LS_RUSH = "sf101rush";
 function rushBests(): Record<string, RushBest> { try { return JSON.parse(localStorage.getItem(LS_RUSH) || "{}") || {}; } catch { return {}; } }
-function rushBest(pilot: number): RushBest | null { return rushBests()[PILOT_NAMES[pilot]] ?? null; }
+/** v1 entries were { time, score, rounds }: they predate run counting, so count them as one run. */
+function migrateRec(b: RushBest | undefined): RushBest | null { if (!b) return null; return { time: b.time || 0, score: b.score || 0, rounds: b.rounds || 0, rank: b.rank ?? "", runs: b.runs ?? 1, boss: b.boss ?? {} }; }
+function rushBest(pilot: number): RushBest | null { return migrateRec(rushBests()[PILOT_NAMES[pilot]]); }
 function saveRushBest(pilot: number, b: RushBest) { try { const all = rushBests(); all[PILOT_NAMES[pilot]] = b; localStorage.setItem(LS_RUSH, JSON.stringify(all)); } catch { /* private mode */ } }
 function fmtT(s: number) { const m = Math.floor(s / 60), r = s - m * 60; return m + ":" + r.toFixed(1).padStart(4, "0"); }
 /** Boss rush runs with no transport at all (no lobby, no sim, no rivals). */
 const NULL_NET: Transport = { localId: -1, online: false, on() {}, joinLobby() {}, leaveLobby() {}, requestStart() {}, sendAttack() {}, sendState() {}, sendKO() {}, sendSnap() {}, spectate() {}, tick() {} };
 const LS_MODE = "sf101mode";
-const MENU_STATES: string[] = ["title", "name", "pilot", "controls", "lobby"];
+const MENU_STATES: string[] = ["title", "name", "pilot", "controls", "lobby", "records"];
 const PILOT_COLS = 4; // pilot-select grid columns (15 pilots + RANDOM = 4x4)
 const MAG = "#ff3cc8", CYA = "#3cf0ff", YEL = "#ffe040", WHT = "#ffffff", DIM = "#2a1440";
 const CELL_W = 16, CELL_H = 32;
@@ -152,7 +155,7 @@ interface Popup { text: string; x: number; y: number; t: number; col: string; sc
 interface Warn { variant?: number; t: number; tier: number; power: number; sender: number; x: number; }
 interface Wave { t: number; dur: number; power: number; acc: number; pat: number; }
 
-type State = "title" | "name" | "pilot" | "lobby" | "play" | "over" | "win" | "controls";
+type State = "title" | "name" | "pilot" | "lobby" | "play" | "over" | "win" | "controls" | "records";
 const SNAP_COLS = [SENT_COL, MAG, YEL, CYA, WHT, "#60ff80"], SNAP_ITEMS = ["dot", "W", "B", "G", "F", "S", "badge", "star"];
 
 class Game {
@@ -238,9 +241,11 @@ class Game {
     const R = this.rush!; R.won = won; this.dead = true; this.state = "over"; this.endT = this.realT; FB_TUNE.rate.fill(1);
     const nh = R.noHit.filter(x => x).length;
     R.rank = !won ? (R.round >= 10 ? "B" : "C") : nh >= 10 && R.t <= 480 ? "S" : nh >= 5 && R.t <= 660 ? "A" : "B";
-    const b = rushBest(this.pilot) ?? { time: 0, score: 0, rounds: 0 };
+    const b = rushBest(this.pilot) ?? { time: 0, score: 0, rounds: 0, rank: "", runs: 0, boss: {} };
     R.newTime = won && (!b.time || R.t < b.time); R.newScore = this.score > b.score;
-    saveRushBest(this.pilot, { time: R.newTime ? R.t : b.time, score: Math.max(b.score, this.score), rounds: Math.max(b.rounds, R.round) }); R.best = rushBest(this.pilot);
+    const boss = { ...b.boss }; R.times.forEach((t, i) => { const k = FINAL_BOSSES[R.order[i]].name, o = boss[k]; if (!o || t < o.t) boss[k] = { t, nh: !!R.noHit[i] }; });
+    const rank = !b.rank || RANK_ORD.indexOf(R.rank) < RANK_ORD.indexOf(b.rank) ? R.rank : b.rank;
+    saveRushBest(this.pilot, { time: R.newTime ? R.t : b.time, score: Math.max(b.score, this.score), rounds: Math.max(b.rounds, R.round), rank, runs: (b.runs ?? 0) + 1, boss }); R.best = rushBest(this.pilot);
     if (won) { this.buildWinStars(); this.popup("BOSS RUSH CLEAR!", PW / 2, PH / 2, YEL, 3); audio.musicEvent("victory"); }
     else { audio.musicEvent("defeat"); audio.explodeBig(); this.burst(this.px, this.py, YEL, 80, 200); this.shake = 14; }
   }
@@ -302,6 +307,7 @@ class Game {
     R.order.forEach((bi, i) => { const yy = y + 130 + i * 10, done = i < R.times.length, fail = !R.won && i === R.round;
       drawText(ctx, String(i + 1).padStart(2, "0") + "  " + (done || fail ? FINAL_BOSSES[bi].name : "-"), x + 10, yy, done ? WHT : fail ? MAG : DIM, 1);
       drawText(ctx, done ? fmtT(R.times[i]) + (R.noHit[i] ? " NO HIT" : "") : fail ? "DOWN" : "", x + w - 14, yy, done ? (R.noHit[i] ? YEL : CYA) : MAG, 1, "right"); });
+    drawText(ctx, (pad.connected ? "Y" : "R") + ": RECORDS", x + w / 2, y + h - 36, "#8070b0", 1, "center");
     this.renderEndMenu(x, y + h - 26, w);
   }
 
@@ -519,21 +525,22 @@ class Game {
       if (this.state === "controls") { if (this.ctlBack === "lobby") this.tickLobby(dt); if (this.state === "controls") this.updateControls(dt); return; }
       if (this.state === "lobby") { this.tickLobby(dt); if (hit("Escape", "PadB")) { this.quitToTitle(); return; } if (hit("Enter", "PadStart")) { this.net.requestStart(); this.lobbyVoted = true; } else if (hit("KeyC", "PadY")) this.openControls(); }
       if (this.state === "title") {
-        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 4) % 5; audio.tone(520, 0.04, "square", 0.05); }
-        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 5; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("ArrowUp", "KeyW", "PadUp")) { this.titleSel = (this.titleSel + 5) % 6; audio.tone(520, 0.04, "square", 0.05); }
+        if (hit("ArrowDown", "KeyS", "PadDown")) { this.titleSel = (this.titleSel + 1) % 6; audio.tone(520, 0.04, "square", 0.05); }
         const lr = (hit("ArrowRight", "KeyD", "PadRight") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") ? 1 : 0);
         if (this.titleSel === 1 && lr) { const n = PILOT_COUNT + 1, cur = this.pilotChoice === RANDOM_PILOT ? PILOT_COUNT : this.pilotChoice, nx = (cur + lr + n) % n;
           this.pilotChoice = nx === PILOT_COUNT ? RANDOM_PILOT : nx; savePilotChoice(this.pilotChoice); audio.init(); audio.tone(780, 0.05, "square", 0.06); }
         else if (actHit("song") || (this.titleSel === 3 && lr)) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); }
         else if (this.titleSel === 4 && (lr || hit("Enter", "Space", "KeyZ", "PadStart", "PadA"))) { audio.init(); const ms = ["online", "offline", "rush"] as const; this.setPlayMode(ms[(ms.indexOf(this.playMode) + (lr < 0 ? 2 : 1)) % 3]); audio.tone(780, 0.05, "square", 0.06); }
         else if (hit("KeyC", "PadY")) this.openControls();
-        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 3) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel === 2) this.openControls(); else if (this.titleSel === 1) this.openPilot("title"); else this.openName(); }
+        else if (hit("Enter", "Space", "KeyZ", "PadStart", "PadA")) { if (this.titleSel === 3) { audio.init(); audio.setSoundtrack(audio.soundtrack + 1); audio.tone(780, 0.05, "square", 0.06); } else if (this.titleSel === 2) this.openControls(); else if (this.titleSel === 5) this.openRecords(); else if (this.titleSel === 1) this.openPilot("title"); else this.openName(); }
       }
       else if (this.state === "name") this.updateName();
       else if (this.state === "pilot") this.updatePilot();
+      else if (this.state === "records") this.updateRecords();
       else if (this.state === "over" && this.rush) { // boss rush results
         if (hit("ArrowLeft", "ArrowRight", "KeyA", "KeyD", "PadLeft", "PadRight", "Tab") || actHit("left") || actHit("right")) { this.endSel ^= 1; audio.tone(520, 0.04, "square", 0.05); }
-        if (this.realT - this.endT > 1) { if (hit("Escape", "PadB", "KeyT")) this.quitToTitle(); else if (hit("Enter", "Space", "PadStart", "PadA") || actHit("fire")) { if (this.endSel) this.quitToTitle(); else this.startRush(); } }
+        if (this.realT - this.endT > 1) { if (hit("Escape", "PadB", "KeyT")) this.quitToTitle(); else if (hit("KeyR", "PadY")) { this.quitToTitle(); this.openRecords(); } else if (hit("Enter", "Space", "PadStart", "PadA") || actHit("fire")) { if (this.endSel) this.quitToTitle(); else this.startRush(); } }
       }
       else if (this.state === "over" || this.state === "win") {
         this.updateRivals(dt); this.updateSpecParts(dt);
@@ -1234,6 +1241,40 @@ class Game {
   // ---------- CONTROLS screen: rebind keyboard / controller separately ----------
   ctlBack: State = "title"; ctlDev: Dev = "key"; ctlRow = 0; ctlCol = 0; ctlMsg = ""; ctlMsgT = 0;
   ctlBind: { act: Act; slot: number; dev: Dev; t: number; armed: boolean } | null = null;
+  recSel = 0;
+  openRecords() { this.state = "records"; this.recSel = this.pilotChoice >= 0 ? this.pilotChoice : 0; audio.init(); audio.tone(660, 0.05, "square", 0.06); }
+  updateRecords() {
+    const lr = (hit("ArrowRight", "KeyD", "PadRight") || actHit("right") ? 1 : 0) - (hit("ArrowLeft", "KeyA", "PadLeft") || actHit("left") ? 1 : 0);
+    if (lr) { this.recSel = (this.recSel + lr + PILOT_COUNT) % PILOT_COUNT; audio.tone(520, 0.04, "square", 0.05); }
+    if (hit("Escape", "Backspace", "PadB", "Enter", "Space", "PadA", "PadStart")) { this.state = "title"; this.titleSel = 5; audio.tone(330, 0.04, "square", 0.06); }
+  }
+  renderRecords() {
+    const x = 16, y = 8, w = W - 32, h = H - 16, ps = this.recSel, b = rushBest(ps), rc = (r: string) => r === "S" ? YEL : r === "A" ? CYA : r === "B" ? "#60ff80" : r === "C" ? MAG : DIM;
+    ctx.fillStyle = "rgba(6,2,14,0.95)"; ctx.fillRect(x, y, w, h); this.frame(x, y, w, h, CYA);
+    drawText(ctx, "BOSS RUSH RECORDS", W / 2, y + 7, YEL, 2, "center", "#000");
+    const bl = Math.floor(this.realT * 3) % 2;
+    drawText(ctx, "<", x + 12, y + 96, bl ? WHT : CYA, 3); drawText(ctx, ">", x + 286, y + 96, bl ? WHT : CYA, 3);
+    drawPilot(ctx, ps, 136, x + 34, y + 34, rc(b?.rank ?? ""));
+    drawText(ctx, "PILOT " + String(ps + 1).padStart(2, "0") + " / " + PILOT_COUNT, x + 180, y + 34, "#8070b0", 1);
+    drawText(ctx, PILOT_NAMES[ps], x + 180, y + 46, WHT, 2);
+    drawText(ctx, "BEST RANK", x + 180, y + 70, "#8070b0", 1); drawText(ctx, b?.rank || "-", x + 186, y + 82, rc(b?.rank ?? ""), 5);
+    const row = (l: string, v: string, yy: number, c = WHT) => { drawText(ctx, l, x + 34, yy, "#8070b0", 1); drawText(ctx, v, x + 284, yy, c, 1, "right"); };
+    row("BEST TOTAL TIME", b?.time ? fmtT(b.time) : "--", y + 184, YEL); row("BEST SCORE", String(b?.score ?? 0), y + 197, CYA);
+    row("MOST ROUNDS", (b?.rounds ?? 0) + " / " + RUSH_N, y + 210); row("RUNS", String(b?.runs ?? 0), y + 223);
+    const nh = Object.values(b?.boss ?? {}).filter(q => q.nh).length, cl = Object.keys(b?.boss ?? {}).length;
+    row("BOSSES CLEARED / NO-HIT", cl + " / " + nh, y + 236, YEL);
+    for (let i = 0; i < PILOT_COUNT; i++) { const dx = x + 34 + i * 17, has = !!rushBest(i)?.runs; ctx.fillStyle = i === ps ? WHT : has ? CYA : "#2a2050"; ctx.fillRect(dx, y + 256, 13, i === ps ? 5 : 3); }
+    if (!b) drawText(ctx, "NO RUNS YET WITH THIS PILOT", x + 159, y + 270, MAG, 1, "center");
+    const bx = x + 314, bw = w - 326; ctx.fillStyle = "#3a3070"; ctx.fillRect(bx - 8, y + 30, 1, h - 60);
+    drawText(ctx, "BOSS", bx, y + 30, "#8070b0", 1); drawText(ctx, "BEST CLEAR", bx + bw, y + 30, "#8070b0", 1, "right");
+    FINAL_BOSSES.forEach((d, i) => { const yy = y + 44 + i * 18, r = b?.boss?.[d.name], sp = finalSprite(i), k = Math.min(14 / sp.height, 24 / sp.width);
+      if (i === ps) { ctx.fillStyle = "#2a0838"; ctx.fillRect(bx - 4, yy - 3, bw + 8, 17); }
+      ctx.globalAlpha = r ? 1 : 0.35; ctx.drawImage(sp, bx + 12 - Math.round(sp.width * k / 2), yy - 1, Math.round(sp.width * k), Math.round(sp.height * k)); ctx.globalAlpha = 1;
+      drawText(ctx, d.name + (i === ps ? "  (SHADOW)" : ""), bx + 30, yy + 3, r ? WHT : i === ps ? MAG : DIM, 1);
+      drawText(ctx, r ? fmtT(r.t) : "--", bx + bw - (r?.nh ? 46 : 0), yy + 3, r ? CYA : i === ps ? MAG : DIM, 1, "right");
+      if (r?.nh) drawText(ctx, "NO HIT", bx + bw, yy + 3, YEL, 1, "right"); });
+    drawText(ctx, (pad.connected ? "D-PAD" : "LEFT/RIGHT") + ": PILOT    " + (pad.connected ? "B" : "ESC") + ": BACK TO TITLE", W / 2, y + h - 16, CYA, 1, "center");
+  }
   openControls() { this.ctlBack = this.state; this.state = "controls"; this.ctlRow = 0; this.ctlCol = 0; this.ctlBind = null; this.ctlDev = pad.connected ? "pad" : "key"; audio.init(); }
   ctlNote(m: string) { this.ctlMsg = m; this.ctlMsgT = 2.5; }
   updateControls(dt: number) {
@@ -1311,6 +1352,7 @@ class Game {
     if (this.state === "title") { this.renderTitle(); this.drawPadMsg(); return; }
     if (this.state === "lobby") { this.renderTitle(true); this.renderLobby(); this.drawPadMsg(); return; }
     if (this.state === "name") { this.renderTitle(true); this.renderName(); this.drawPadMsg(); return; }
+    if (this.state === "records") { this.renderTitle(true, true); this.renderRecords(); this.drawPadMsg(); return; }
     if (this.state === "pilot") { this.renderTitle(true, true); this.renderPilot(); this.drawPadMsg(); return; }
     if (this.state === "controls") { this.renderTitle(true, true); this.renderControls(); this.drawPadMsg(); return; }
     // spectating: temporarily swap in the watched player's interpolated state and draw it with the normal renderer
@@ -1425,12 +1467,12 @@ class Game {
     drawText(ctx, "101", W / 2, 130 + bob, CYA, 8, "center", "#003040");
     drawText(ctx, "101-PLAYER LAST PILOT STANDING BATTLE ROYALE", W / 2, 180, YEL, 2, "center");
     ctx.drawImage(shipSpr, W / 2 - 11, 200, 22, 22);
-    drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PLAYER " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 286, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
+    drawText(ctx, (this.net.online ? "ONLINE  " : "OFFLINE  ") + "PLAYER " + this.name + (this.netMsg ? "   " + this.netMsg : ""), W / 2, 297, this.net.online ? "#60ff80" : "#8070b0", 1, "center");
     if (this.playMode === "rush") { const pc = this.pilotChoice, b = pc >= 0 ? rushBest(pc) : null;
-      drawText(ctx, pc < 0 ? "BOSS RUSH: 15 FINAL BOSSES BACK TO BACK, BESTS SAVED PER PILOT" : "BOSS RUSH BEST (" + PILOT_NAMES[pc] + "):  TIME " + (b?.time ? fmtT(b.time) : "--:--") + "   SCORE " + (b?.score ?? 0) + "   ROUNDS " + (b?.rounds ?? 0) + "/" + RUSH_N, W / 2, 297, MAG, 1, "center"); }
-    ["LAUNCH", "PILOT", "CONTROLS", "MUSIC", "PLAY"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
+      drawText(ctx, pc < 0 ? "BOSS RUSH: 15 FINAL BOSSES BACK TO BACK, BESTS SAVED PER PILOT" : "BOSS RUSH BEST (" + PILOT_NAMES[pc] + "):  TIME " + (b?.time ? fmtT(b.time) : "--:--") + "   SCORE " + (b?.score ?? 0) + "   ROUNDS " + (b?.rounds ?? 0) + "/" + RUSH_N, W / 2, 307, MAG, 1, "center"); }
+    ["LAUNCH", "PILOT", "CONTROLS", "MUSIC", "PLAY", "RECORDS"].forEach((m, i) => { const on = this.titleSel === i, blink = Math.floor(t * 2) % 2 === 0;
       const lab = i === 0 ? (pad.connected ? "PRESS START TO LAUNCH" : "PRESS ENTER TO LAUNCH") : i === 1 ? "PILOT: < " + (this.pilotChoice === RANDOM_PILOT ? "RANDOM" : PILOT_NAMES[this.pilotChoice]) + " >"
-        : i === 4 ? "PLAY: < " + this.modeLabel() + " >"
+        : i === 4 ? "PLAY: < " + this.modeLabel() + " >" : i === 5 ? "BOSS RUSH RECORDS"
         : i === 2 ? "CONTROLS  (" + (pad.connected ? "Y" : "C") + ")" : "MUSIC: < " + audio.soundtrackName + " >" + (pad.connected ? "" : "  (" + kn("song") + ")");
       drawText(ctx, (on ? "> " : "  ") + lab + (on ? " <" : "  "), W / 2, 228 + i * 11 + (i ? 3 : 0), on ? (blink ? WHT : YEL) : "#8070b0", i === 0 ? 2 : 1, "center"); });
     const mv = (d: Dev) => { const n = (["up", "down", "left", "right"] as Act[]).map(a => actName(d, a)); return n.every(q => q.startsWith("LS")) ? "L-STICK" : n.every(q => q.startsWith("D-")) ? "D-PAD" : n.join("/"); };
@@ -1442,7 +1484,7 @@ class Game {
     if (this.playMode === "rush") help.splice(1, help.length - 1, (pad.connected ? "START" : kn("pause")) + " PAUSE (REAL PAUSE)   QUIT TO TITLE FROM PAUSE OR RESULTS",
       "BEAT ALL 15 FINAL BOSSES BACK TO BACK. YOUR OWN PILOT'S BOSS COMES LAST. MAX WEAPON + BOMBS AT START,",
       "HEARTS REFILL AFTER EACH BOSS. CHAIN KILLS AND CASH IN ATTACKS TO STRIKE THE BOSS. NO-HIT CLEARS SCORE BIG.");
-    help.forEach((l, i) => drawText(ctx, l, W / 2, (this.playMode === "rush" ? 310 : 300) + i * 12, i < 2 ? CYA : "#b080ff", 1, "center"));
+    help.forEach((l, i) => drawText(ctx, l, W / 2, (this.playMode === "rush" ? 319 + i * 10 : 309 + i * 11), i < 2 ? CYA : "#b080ff", 1, "center"));
   }
 
   renderPanels() {
